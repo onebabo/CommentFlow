@@ -8,6 +8,8 @@
    - 웹툰/만화: 회차 이미지 일부 ({kind}_episode_image.file_path, 최대 MAX_IMAGES 장)
 3) 사이트 댓글 규정(rules.py)을 통과한 감상 댓글만 book_comment_recommend 에 저장합니다.
 
+--work-id 를 주면 1) 대신 그 작품에서만, 추천이 아직 없는 회차를 최근 읽은 순으로 --count 개 만듭니다.
+
 사이트에 댓글을 등록하지는 않습니다. 등록은 /comment_list 에서 [연동] 후 사용자가 직접 합니다.
 """
 import configparser
@@ -139,16 +141,15 @@ def pick_works(cursor, kind: str, count: int) -> list[dict]:
     return cursor.fetchall()
 
 
-def pick_episode(cursor, kind: str, work_id: int) -> dict | None:
-    """최근 읽은 회차(읽은 기록이 없으면 수집된 최신 회차) → {episode_code, episode_no, episode_title, content?}"""
+def find_work(cursor, kind: str, work_id: int) -> dict | None:
+    """--work-id 로 지정한 작품 1개 → {work_id, title, source_url} (추천·초안 기록 여부와 무관)"""
     if kind == "novel":
         cursor.execute(
             """
-            SELECT episode_code, episode_no, episode_title, content
-              FROM book_info_chapter
-             WHERE book_id = %s AND has_content = 1
-             ORDER BY (read_yn = 'Y') DESC, read_at DESC, episode_no DESC
-             LIMIT 1
+            SELECT w.book_id AS work_id, COALESCE(i.title, w.title) AS title, w.source_url
+              FROM book_work_list AS w
+              LEFT JOIN book_info AS i ON i.book_id = w.book_id
+             WHERE w.book_id = %s
             """,
             (work_id,),
         )
@@ -157,16 +158,51 @@ def pick_episode(cursor, kind: str, work_id: int) -> dict | None:
     t, idc = KINDS[kind]["table"], KINDS[kind]["id"]
     cursor.execute(
         f"""
-        SELECT e.episode_code, e.episode_no, e.episode_title
-          FROM {t}_episode AS e
-          LEFT JOIN {t}_episode_read AS r ON r.{idc} = e.{idc} AND r.episode_no = e.episode_no
-         WHERE e.{idc} = %s AND e.has_images = 1
-         ORDER BY (r.{idc} IS NOT NULL) DESC, r.read_at DESC, e.episode_no DESC
-         LIMIT 1
+        SELECT t.{idc} AS work_id, t.title, COALESCE(w.source_url, t.source_url) AS source_url
+          FROM {t}_info AS t
+          LEFT JOIN {t}_work_list AS w ON w.{idc} = t.{idc}
+         WHERE t.{idc} = %s
         """,
         (work_id,),
     )
     return cursor.fetchone()
+
+
+def pick_episodes(cursor, kind: str, work_id: int, limit: int = 1) -> list[dict]:
+    """추천이 아직 없는 회차를 최근 읽은 순(읽은 기록이 없으면 수집된 최신 회차부터)으로 limit 개
+    → [{episode_code, episode_no, episode_title, content?}]"""
+    if kind == "novel":
+        cursor.execute(
+            """
+            SELECT c.episode_code, c.episode_no, c.episode_title, c.content
+              FROM book_info_chapter AS c
+             WHERE c.book_id = %s AND c.has_content = 1
+               AND NOT EXISTS (SELECT 1 FROM book_comment_recommend AS r
+                                WHERE r.kind = 'novel' AND r.work_id = c.book_id
+                                  AND r.episode_code = c.episode_code)
+             ORDER BY (c.read_yn = 'Y') DESC, c.read_at DESC, c.episode_no DESC
+             LIMIT %s
+            """,
+            (work_id, limit),
+        )
+        return cursor.fetchall()
+
+    t, idc = KINDS[kind]["table"], KINDS[kind]["id"]
+    cursor.execute(
+        f"""
+        SELECT e.episode_code, e.episode_no, e.episode_title
+          FROM {t}_episode AS e
+          LEFT JOIN {t}_episode_read AS r ON r.{idc} = e.{idc} AND r.episode_no = e.episode_no
+         WHERE e.{idc} = %s AND e.has_images = 1
+           AND NOT EXISTS (SELECT 1 FROM book_comment_recommend AS cr
+                            WHERE cr.kind = %s AND cr.work_id = e.{idc}
+                              AND cr.episode_code = e.episode_code)
+         ORDER BY (r.{idc} IS NOT NULL) DESC, r.read_at DESC, e.episode_no DESC
+         LIMIT %s
+        """,
+        (work_id, kind, limit),
+    )
+    return cursor.fetchall()
 
 
 def image_media_type(data: bytes) -> str | None:
@@ -257,9 +293,9 @@ def analyze_episode(client, cfg: dict, kind: str, work_title: str, episode: dict
     }
 
 
-def recommend_for_work(cursor, client, cfg: dict, kind: str, work: dict) -> tuple[bool, str]:
-    """작품 1개 처리 — (저장 여부, 결과 메시지)를 반환합니다."""
-    episode = pick_episode(cursor, kind, work["work_id"])
+def recommend_for_episode(cursor, client, cfg: dict, kind: str, work: dict,
+                          episode: dict | None) -> tuple[bool, str]:
+    """회차 1개 처리 — (저장 여부, 결과 메시지)를 반환합니다."""
     images: list[dict] = []
     if kind == "novel":
         if not episode or not (episode["content"] or "").strip():
@@ -299,24 +335,44 @@ def recommend_for_work(cursor, client, cfg: dict, kind: str, work: dict) -> tupl
     return True, f"{episode_heading(episode)} 저장: {result['comment']}"
 
 
-def run(conn, kind: str, count: int) -> int:
-    """추천 댓글을 만들고 저장한 건수를 반환합니다. 작품마다 바로 commit 해 화면에서 진행이 보입니다."""
+def run(conn, kind: str, count: int, work_id: int | None = None) -> int:
+    """추천 댓글을 만들고 저장한 건수를 반환합니다. 건마다 바로 commit 해 화면에서 진행이 보입니다.
+
+    work_id 가 없으면 추천 댓글이 없는 보유 작품 count 개를 랜덤으로 골라 작품마다 1회차,
+    work_id 가 있으면 그 작품에서만 추천이 없는 회차 count 개를 만듭니다.
+    """
     if kind not in KINDS:
         raise SystemExit(f"알 수 없는 구분: {kind} (novel / toon / manhwa)")
 
     cfg = load_gemini_config()
     client = make_client(cfg)
+    label = KINDS[kind]["label"]
     saved = 0
     with conn.cursor(pymysql.cursors.DictCursor) as cursor:
-        works = pick_works(cursor, kind, count)
-        print(f"[{KINDS[kind]['label']}] 대상 작품 {len(works)}개 (요청 {count}개, 모델 {cfg['model']})", flush=True)
-        for i, work in enumerate(works, 1):
+        if work_id:
+            work = find_work(cursor, kind, work_id)
+            if not work:
+                print(f"[{label}] 작품 {work_id} 를 찾을 수 없습니다.", flush=True)
+                print("완료: 0건 저장", flush=True)
+                return 0
+            episodes = pick_episodes(cursor, kind, work_id, count)
+            print(f"[{label}] {work_id} {work['title']} — 추천 없는 회차 {len(episodes)}개 "
+                  f"(요청 {count}개, 모델 {cfg['model']})", flush=True)
+            jobs = [(work, episode) for episode in episodes]
+        else:
+            works = pick_works(cursor, kind, count)
+            print(f"[{label}] 대상 작품 {len(works)}개 (요청 {count}개, 모델 {cfg['model']})", flush=True)
+            jobs = [(work, None) for work in works]
+
+        for i, (work, episode) in enumerate(jobs, 1):
             try:
-                ok, message = recommend_for_work(cursor, client, cfg, kind, work)
+                if episode is None:
+                    episode = next(iter(pick_episodes(cursor, kind, work["work_id"])), None)
+                ok, message = recommend_for_episode(cursor, client, cfg, kind, work, episode)
                 saved += ok
-            except Exception as err:  # 작품 하나 실패해도 나머지는 계속
+            except Exception as err:  # 하나 실패해도 나머지는 계속
                 message = f"오류: {type(err).__name__}: {err}"
             conn.commit()
-            print(f"[{i}/{len(works)}] {work['work_id']} {work['title']} — {message}", flush=True)
+            print(f"[{i}/{len(jobs)}] {work['work_id']} {work['title']} — {message}", flush=True)
     print(f"완료: {saved}건 저장", flush=True)
     return saved

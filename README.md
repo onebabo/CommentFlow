@@ -47,6 +47,13 @@ python commentflow.py recommend --kind novel --count 20   # novel:소설, toon:�
 3. `rules.py` 규정 검사를 통과한 댓글만 `book_comment_recommend` 테이블에 저장합니다
    (`comment_sql/01_comment_recommend_테이블생성.sql`, 접속 시 자동 생성).
 
+작품을 지정하면 그 작품에서만, 추천이 아직 없는 회차를 최근 읽은 순으로 `--count` 개 만듭니다
+(`/comment_list` 의 ID 입력폼으로 조회한 상태에서 [댓글 생성]을 누르면 이 방식으로 실행).
+
+```
+python commentflow.py recommend --kind novel --work-id 59094 --count 10
+```
+
 **사이트에 댓글을 등록하지 않습니다.** `/comment_list` 에서 댓글을 고쳐 저장하고 **[연동]** 을 누르면
 댓글이 클립보드에 복사되고 원글 회차 페이지가 열립니다. 붙여넣고 등록 버튼은 직접 누른 뒤 **[등록완료]** 로 표시합니다.
 
