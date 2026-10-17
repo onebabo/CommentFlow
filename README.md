@@ -31,3 +31,25 @@ python commentflow.py check "잘봤어요"   # 규정 검사만
 - 인사말뿐인 댓글, 유료 회차/절차 불평 단어가 들어간 댓글은 저장되지 않습니다.
 
 DB 접속은 `config.example.ini`를 `config.ini`로 복사해 채웁니다. `config.ini`는 git에 올리지 않습니다.
+
+## 추천 댓글 생성 (`recommend`, book_web `/comment_list`)
+
+book_web `/comment_list` 의 **[댓글 생성]** 버튼이 아래 명령을 실행합니다. 터미널에서 직접 실행해도 됩니다.
+
+```
+python commentflow.py recommend --kind novel --count 20   # novel:소설, toon:웹툰, manhwa:만화
+```
+
+1. 추천 댓글이 아직 없는 보유 작품을 랜덤으로 `--count` 개 고릅니다
+   (소설: `book_work_list` used='Y', 웹툰·만화: `{toon,manhwa}_info` 중 수집 보류 제외).
+2. 작품마다 최근 읽은 회차(없으면 수집된 최신 회차)를 Claude 로 분석합니다
+   (소설: 본문 텍스트, 웹툰·만화: 회차 이미지 최대 8장).
+3. `rules.py` 규정 검사를 통과한 댓글만 `book_comment_recommend` 테이블에 저장합니다
+   (`comment_sql/01_comment_recommend_테이블생성.sql`, 접속 시 자동 생성).
+
+**사이트에 댓글을 등록하지 않습니다.** `/comment_list` 에서 댓글을 고쳐 저장하고 **[연동]** 을 누르면
+댓글이 클립보드에 복사되고 원글 회차 페이지가 열립니다. 붙여넣고 등록 버튼은 직접 누른 뒤 **[등록완료]** 로 표시합니다.
+
+Claude API 설정은 `config.ini` 의 `[anthropic]` 섹션입니다 (`pip install -r requirements.txt` 로 `anthropic` 설치).
+`api_key` 를 비우면 `ANTHROPIC_API_KEY` 환경변수 / `ant auth login` 프로필을 씁니다.
+기본 모델은 `claude-opus-5-5`, `effort = medium` 이며 거절(refusal) 시 서버 측 대체 모델(`fallbacks: "default"`)로 다시 시도합니다.

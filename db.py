@@ -5,7 +5,11 @@ from pathlib import Path
 import pymysql
 
 CONFIG_NAME = "config.ini"
-SCHEMA_SQL = Path(__file__).resolve().parent / "comment_sql" / "00_comment_테이블생성.sql"
+SQL_DIR = Path(__file__).resolve().parent / "comment_sql"
+SCHEMA_SQLS = [
+    SQL_DIR / "00_comment_테이블생성.sql",
+    SQL_DIR / "01_comment_recommend_테이블생성.sql",
+]
 
 _schema_checked = False
 
@@ -34,8 +38,8 @@ def load_mysql_config(path: Path | None = None) -> dict:
     }
 
 
-def schema_statements(path: Path = SCHEMA_SQL) -> list[str]:
-    """comment_sql/00_comment_테이블생성.sql 을 '--' 주석 제거 후 ';' 기준 구문 목록으로 반환합니다."""
+def schema_statements(path: Path) -> list[str]:
+    """테이블 생성 SQL 파일을 '--' 주석 제거 후 ';' 기준 구문 목록으로 반환합니다."""
     lines = [
         line
         for line in path.read_text(encoding="utf-8-sig").splitlines()
@@ -47,8 +51,9 @@ def schema_statements(path: Path = SCHEMA_SQL) -> list[str]:
 def ensure_schema(conn) -> None:
     with conn.cursor() as cursor:
         cursor.execute("SET NAMES utf8mb4")
-        for stmt in schema_statements():
-            cursor.execute(stmt)
+        for path in SCHEMA_SQLS:
+            for stmt in schema_statements(path):
+                cursor.execute(stmt)
 
 
 @contextmanager

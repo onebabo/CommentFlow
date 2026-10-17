@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 
 import pymysql.cursors
 
+import recommend
 import rules
 from db import get_connection
 
@@ -170,6 +171,11 @@ def cmd_list(args) -> None:
             print(f"       {c['body']}")
 
 
+def cmd_recommend(args) -> None:
+    with get_connection() as conn:
+        recommend.run(conn, args.kind, args.count)
+
+
 def cmd_check(args) -> None:
     ok = print_check(args.text)
     print("규정 통과" if ok else "규정 위반")
@@ -195,6 +201,11 @@ def main() -> None:
     p.add_argument("--status", choices=list(STATUS_NAMES), help="D:초안, C:복사함, P:등록완료")
     p.add_argument("--limit", type=int, default=20)
     p.set_defaults(func=cmd_list)
+
+    p = sub.add_parser("recommend", help="회차 내용 분석 → 추천 댓글 생성 (book_web /comment_list [댓글 생성])")
+    p.add_argument("--kind", default="novel", choices=["novel", "toon", "manhwa"])
+    p.add_argument("--count", type=int, default=20, help="추천 댓글이 없는 작품 중 랜덤 선정 개수")
+    p.set_defaults(func=cmd_recommend)
 
     p = sub.add_parser("check", help="댓글 문구 규정 검사만")
     p.add_argument("text")
