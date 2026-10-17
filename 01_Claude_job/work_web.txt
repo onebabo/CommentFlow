@@ -72,5 +72,6 @@ book_web 에 "추천 댓글" 페이지를 추가해줘.
   cd D:\workspaces\github\onebabo\CommentFlow
   (브랜치 worktree-comment-recommend 병합 또는 checkout 후)
   pip install -r requirements.txt
-  config.example.ini → config.ini 복사 후 [mysql] 비밀번호, [anthropic] api_key 입력
+  config.example.ini → config.ini 복사 후 [mysql] 비밀번호, [gemini] api_key 입력
+  (Gemini 무료 키: https://aistudio.google.com/apikey )
   python commentflow.py recommend --kind novel --count 1     ← 1건으로 먼저 동작 확인

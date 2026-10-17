@@ -3,14 +3,13 @@
 1) 추천 댓글이 아직 없는 보유 작품을 랜덤으로 N개 고르고
    - 소설: book_work_list (used='Y'), 본문이 수집된 회차가 있는 작품
    - 웹툰/만화: {toon,manhwa}_info, 이미지가 수집된 회차가 있고 수집 보류가 아닌 작품
-2) 작품마다 최근 읽은 회차(없으면 수집된 최신 회차)를 Claude 로 분석해
+2) 작품마다 최근 읽은 회차(없으면 수집된 최신 회차)를 Gemini 로 분석해
    - 소설: 본문 텍스트 (book_info_chapter.content)
    - 웹툰/만화: 회차 이미지 일부 ({kind}_episode_image.file_path, 최대 MAX_IMAGES 장)
 3) 사이트 댓글 규정(rules.py)을 통과한 감상 댓글만 book_comment_recommend 에 저장합니다.
 
 사이트에 댓글을 등록하지는 않습니다. 등록은 /comment_list 에서 [연동] 후 사용자가 직접 합니다.
 """
-import base64
 import configparser
 import json
 import os
@@ -22,13 +21,13 @@ import pymysql.cursors
 import rules
 from db import config_path
 
-DEFAULT_MODEL = "claude-opus-5-5"
-DEFAULT_EFFORT = "medium"
+DEFAULT_MODEL = "gemini-2.5-flash"
 DEFAULT_ORIGIN = "https://toki35.com"
 PENDING_TITLE_PREFIX = "[등록대기]"
 MAX_ATTEMPTS = 2
 MAX_IMAGES = 8
 MAX_IMAGE_BYTES = 4_500_000  # API 이미지 1장 한도(5MB) 아래로
+MAX_NOVEL_CHARS = 100_000  # 무료 티어·요청 크기 여유
 
 # kind → 화면 표기 · 사이트 URL 경로 · 테이블 접두어 · 작품 ID 컬럼
 KINDS = {
@@ -63,29 +62,30 @@ OUTPUT_SCHEMA = {
         "comment": {"type": "string", "description": "규정을 지킨 감상 댓글"},
     },
     "required": ["summary", "comment"],
-    "additionalProperties": False,
 }
 
 
-def load_anthropic_config() -> dict:
-    """config.ini [anthropic] (api_key, model, effort). api_key 가 없으면 SDK 기본 인증(ANTHROPIC_API_KEY 등)."""
+def load_gemini_config() -> dict:
+    """config.ini [gemini] (api_key, model). api_key 가 없으면 GEMINI_API_KEY 환경변수."""
     parser = configparser.ConfigParser(interpolation=None)
     parser.read(config_path(), encoding="utf-8")
-    section = parser["anthropic"] if parser.has_section("anthropic") else {}
+    section = parser["gemini"] if parser.has_section("gemini") else {}
     return {
         "api_key": (section.get("api_key", "") or "").strip() or None,
         "model": (section.get("model", "") or "").strip() or DEFAULT_MODEL,
-        "effort": (section.get("effort", "") or "").strip() or DEFAULT_EFFORT,
     }
 
 
 def make_client(cfg: dict):
-    import anthropic
+    from google import genai
 
-    if not cfg["api_key"] and not os.environ.get("ANTHROPIC_API_KEY"):
-        print("[주의] config.ini [anthropic] api_key 와 ANTHROPIC_API_KEY 가 모두 비어 있습니다. "
-              "ant auth login 프로필이 없으면 인증 오류가 납니다.", flush=True)
-    return anthropic.Anthropic(api_key=cfg["api_key"]) if cfg["api_key"] else anthropic.Anthropic()
+    api_key = cfg["api_key"] or (os.environ.get("GEMINI_API_KEY") or "").strip() or None
+    if not api_key:
+        raise SystemExit(
+            "Gemini API 키가 없습니다. https://aistudio.google.com/apikey 에서 무료 키를 발급해 "
+            "config.ini [gemini] api_key 에 넣거나 GEMINI_API_KEY 환경변수를 설정하세요."
+        )
+    return genai.Client(api_key=api_key)
 
 
 def episode_origin(source_url: str | None) -> str:
@@ -182,7 +182,7 @@ def image_media_type(data: bytes) -> str | None:
 
 
 def episode_images(cursor, kind: str, episode_code: str) -> list[dict]:
-    """회차 이미지 중 최대 MAX_IMAGES 장을 고르게 골라 API image 블록으로 만듭니다."""
+    """회차 이미지 중 최대 MAX_IMAGES 장을 고르게 골라 {mime_type, data} 목록으로 만듭니다."""
     t = KINDS[kind]["table"]
     cursor.execute(
         f"SELECT file_path FROM {t}_episode_image "
@@ -201,11 +201,7 @@ def episode_images(cursor, kind: str, episode_code: str) -> list[dict]:
         media_type = image_media_type(data)
         if not media_type:
             continue
-        blocks.append({
-            "type": "image",
-            "source": {"type": "base64", "media_type": media_type,
-                       "data": base64.standard_b64encode(data).decode("ascii")},
-        })
+        blocks.append({"mime_type": media_type, "data": data})
     return blocks
 
 
@@ -218,38 +214,46 @@ def episode_heading(episode: dict) -> str:
 
 def analyze_episode(client, cfg: dict, kind: str, work_title: str, episode: dict,
                     images: list[dict], feedback: str = "") -> dict:
-    """회차 내용을 Claude 로 분석해 {"summary", "comment", "model"} 를 받습니다."""
+    """회차 내용을 Gemini 로 분석해 {"summary", "comment", "model"} 를 받습니다."""
+    from google.genai import types
+
     text = f"작품: {work_title}\n회차: {episode_heading(episode)}"
     if kind == "novel":
         system = SYSTEM_PROMPTS["novel"]
-        text += f"\n\n<본문>\n{episode['content']}\n</본문>"
+        body = (episode["content"] or "").strip()
+        if len(body) > MAX_NOVEL_CHARS:
+            body = body[:MAX_NOVEL_CHARS] + "\n…(본문 일부 생략)"
+        text += f"\n\n<본문>\n{body}\n</본문>"
     else:
         system = SYSTEM_PROMPTS["image"].format(label=KINDS[kind]["label"])
         text += f"\n\n위 이미지 {len(images)}장은 이 회차에서 순서대로 고르게 뽑은 장면입니다."
     if feedback:
         text += f"\n\n이전에 쓴 댓글이 규정 검사에서 거절됐습니다: {feedback}\n이 점을 고쳐 다시 쓰세요."
 
-    response = client.beta.messages.create(
+    parts: list = [
+        types.Part.from_bytes(data=img["data"], mime_type=img["mime_type"]) for img in images
+    ]
+    parts.append(text)
+
+    response = client.models.generate_content(
         model=cfg["model"],
-        max_tokens=16000,
-        betas=["server-side-fallback-2026-07-01"],
-        fallbacks="default",
-        system=system,
-        output_config={
-            "effort": cfg["effort"],
-            "format": {"type": "json_schema", "schema": OUTPUT_SCHEMA},
+        contents=parts,
+        config={
+            "system_instruction": system,
+            "response_mime_type": "application/json",
+            "response_json_schema": OUTPUT_SCHEMA,
+            "temperature": 0.8,
         },
-        messages=[{"role": "user", "content": [*images, {"type": "text", "text": text}]}],
     )
-    if response.stop_reason == "refusal":
-        raise RuntimeError("모델이 응답을 거절했습니다.")
-    if response.stop_reason == "max_tokens":
-        raise RuntimeError("응답이 max_tokens 에서 잘렸습니다.")
-    data = json.loads(next((b.text for b in response.content if b.type == "text"), ""))
+    raw = (response.text or "").strip()
+    if not raw:
+        raise RuntimeError("모델 응답이 비어 있습니다.")
+    data = json.loads(raw)
+    model_name = getattr(response, "model_version", None) or cfg["model"]
     return {
         "summary": data["summary"].strip(),
         "comment": data["comment"].strip(),
-        "model": response.model,
+        "model": model_name,
     }
 
 
@@ -300,7 +304,7 @@ def run(conn, kind: str, count: int) -> int:
     if kind not in KINDS:
         raise SystemExit(f"알 수 없는 구분: {kind} (novel / toon / manhwa)")
 
-    cfg = load_anthropic_config()
+    cfg = load_gemini_config()
     client = make_client(cfg)
     saved = 0
     with conn.cursor(pymysql.cursors.DictCursor) as cursor:
