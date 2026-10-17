@@ -139,15 +139,47 @@ def pick_works(cursor, kind: str, count: int) -> list[dict]:
     return cursor.fetchall()
 
 
-def pick_episode(cursor, kind: str, work_id: int) -> dict | None:
-    """최근 읽은 회차(읽은 기록이 없으면 수집된 최신 회차) → {episode_code, episode_no, episode_title, content?}"""
+def pick_work(cursor, kind: str, work_id: int) -> list[dict]:
+    """지정한 작품 하나 (추천·초안 기록이 있어도 대상) → [{work_id, title, source_url}] 또는 []"""
     if kind == "novel":
         cursor.execute(
             """
-            SELECT episode_code, episode_no, episode_title, content
-              FROM book_info_chapter
-             WHERE book_id = %s AND has_content = 1
-             ORDER BY (read_yn = 'Y') DESC, read_at DESC, episode_no DESC
+            SELECT i.book_id AS work_id, COALESCE(i.title, w.title) AS title,
+                   COALESCE(w.source_url, i.source_url) AS source_url
+              FROM book_info AS i
+              LEFT JOIN book_work_list AS w ON w.book_id = i.book_id
+             WHERE i.book_id = %s
+            """,
+            (work_id,),
+        )
+        return cursor.fetchall()
+
+    t, idc = KINDS[kind]["table"], KINDS[kind]["id"]
+    cursor.execute(
+        f"""
+        SELECT t.{idc} AS work_id, t.title, COALESCE(w.source_url, t.source_url) AS source_url
+          FROM {t}_info AS t
+          LEFT JOIN {t}_work_list AS w ON w.{idc} = t.{idc}
+         WHERE t.{idc} = %s
+        """,
+        (work_id,),
+    )
+    return cursor.fetchall()
+
+
+def pick_episode(cursor, kind: str, work_id: int) -> dict | None:
+    """추천이 아직 없는 회차 중 최근 읽은 회차(읽은 기록이 없으면 수집된 최신 회차)
+    → {episode_code, episode_no, episode_title, content?}"""
+    if kind == "novel":
+        cursor.execute(
+            """
+            SELECT c.episode_code, c.episode_no, c.episode_title, c.content
+              FROM book_info_chapter AS c
+             WHERE c.book_id = %s AND c.has_content = 1
+               AND NOT EXISTS (SELECT 1 FROM book_comment_recommend AS r
+                                WHERE r.kind = 'novel' AND r.work_id = c.book_id
+                                  AND r.episode_code = c.episode_code)
+             ORDER BY (c.read_yn = 'Y') DESC, c.read_at DESC, c.episode_no DESC
              LIMIT 1
             """,
             (work_id,),
@@ -161,10 +193,13 @@ def pick_episode(cursor, kind: str, work_id: int) -> dict | None:
           FROM {t}_episode AS e
           LEFT JOIN {t}_episode_read AS r ON r.{idc} = e.{idc} AND r.episode_no = e.episode_no
          WHERE e.{idc} = %s AND e.has_images = 1
+           AND NOT EXISTS (SELECT 1 FROM book_comment_recommend AS cr
+                            WHERE cr.kind = %s AND cr.work_id = e.{idc}
+                              AND cr.episode_code = e.episode_code)
          ORDER BY (r.{idc} IS NOT NULL) DESC, r.read_at DESC, e.episode_no DESC
          LIMIT 1
         """,
-        (work_id,),
+        (work_id, kind),
     )
     return cursor.fetchone()
 
@@ -259,12 +294,12 @@ def recommend_for_work(cursor, client, cfg: dict, kind: str, work: dict) -> tupl
     images: list[dict] = []
     if kind == "novel":
         if not episode or not (episode["content"] or "").strip():
-            return False, "본문 있는 회차 없음 → 건너뜀"
+            return False, "추천 안 만든 본문 있는 회차 없음 → 건너뜀"
     else:
         if episode:
             images = episode_images(cursor, kind, episode["episode_code"])
         if not images:
-            return False, "읽을 수 있는 회차 이미지 없음 → 건너뜀"
+            return False, "추천 안 만든 회차 중 읽을 수 있는 이미지 없음 → 건너뜀"
 
     feedback = ""
     for _ in range(MAX_ATTEMPTS):
@@ -295,8 +330,12 @@ def recommend_for_work(cursor, client, cfg: dict, kind: str, work: dict) -> tupl
     return True, f"{episode_heading(episode)} 저장: {result['comment']}"
 
 
-def run(conn, kind: str, count: int) -> int:
-    """추천 댓글을 만들고 저장한 건수를 반환합니다. 작품마다 바로 commit 해 화면에서 진행이 보입니다."""
+def run(conn, kind: str, count: int, work_id: int | None = None) -> int:
+    """추천 댓글을 만들고 저장한 건수를 반환합니다. 작품마다 바로 commit 해 화면에서 진행이 보입니다.
+
+    work_id 를 주면 그 작품만 대상으로 추천이 없는 회차 1개를 분석하고(count 무시),
+    없으면 추천 댓글이 없는 보유 작품 count 개를 랜덤으로 고릅니다.
+    """
     if kind not in KINDS:
         raise SystemExit(f"알 수 없는 구분: {kind} (novel / toon / manhwa)")
 
@@ -304,8 +343,15 @@ def run(conn, kind: str, count: int) -> int:
     client = make_client(cfg)
     saved = 0
     with conn.cursor(pymysql.cursors.DictCursor) as cursor:
-        works = pick_works(cursor, kind, count)
-        print(f"[{KINDS[kind]['label']}] 대상 작품 {len(works)}개 (요청 {count}개, 모델 {cfg['model']})", flush=True)
+        if work_id:
+            works = pick_work(cursor, kind, work_id)
+            if not works:
+                print(f"[{KINDS[kind]['label']}] 작품 ID {work_id} 를 찾을 수 없습니다.", flush=True)
+            target = f"작품 ID {work_id}"
+        else:
+            works = pick_works(cursor, kind, count)
+            target = f"요청 {count}개"
+        print(f"[{KINDS[kind]['label']}] 대상 작품 {len(works)}개 ({target}, 모델 {cfg['model']})", flush=True)
         for i, work in enumerate(works, 1):
             try:
                 ok, message = recommend_for_work(cursor, client, cfg, kind, work)

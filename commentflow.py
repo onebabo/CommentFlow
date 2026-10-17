@@ -173,7 +173,7 @@ def cmd_list(args) -> None:
 
 def cmd_recommend(args) -> None:
     with get_connection() as conn:
-        recommend.run(conn, args.kind, args.count)
+        recommend.run(conn, args.kind, args.count, args.work_id)
 
 
 def cmd_check(args) -> None:
@@ -205,6 +205,8 @@ def main() -> None:
     p = sub.add_parser("recommend", help="회차 내용 분석 → 추천 댓글 생성 (book_web /comment_list [댓글 생성])")
     p.add_argument("--kind", default="novel", choices=["novel", "toon", "manhwa"])
     p.add_argument("--count", type=int, default=20, help="추천 댓글이 없는 작품 중 랜덤 선정 개수")
+    p.add_argument("--work-id", "--book-id", dest="work_id", type=int,
+                   help="이 작품(book_id/toon_id/manhwa_id)만 대상 — 추천이 없는 회차 1개 생성 (--count 무시)")
     p.set_defaults(func=cmd_recommend)
 
     p = sub.add_parser("check", help="댓글 문구 규정 검사만")
