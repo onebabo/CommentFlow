@@ -42,14 +42,25 @@ python commentflow.py recommend --kind novel --count 20   # novel:소설, toon:�
 
 1. 추천 댓글이 아직 없는 보유 작품을 랜덤으로 `--count` 개 고릅니다
    (소설: `book_work_list` used='Y', 웹툰·만화: `{toon,manhwa}_info` 중 수집 보류 제외).
-2. 작품마다 최근 읽은 회차(없으면 수집된 최신 회차)를 Claude 로 분석합니다
+2. 작품마다 최근 읽은 회차(없으면 수집된 최신 회차)를 Gemini 로 분석합니다
    (소설: 본문 텍스트, 웹툰·만화: 회차 이미지 최대 8장).
 3. `rules.py` 규정 검사를 통과한 댓글만 `book_comment_recommend` 테이블에 저장합니다
    (`comment_sql/01_comment_recommend_테이블생성.sql`, 접속 시 자동 생성).
 
+작품 ID 를 주면 그 작품만 대상으로 합니다 (`/comment_list` 의 작품 아이디 입력값).
+추천 댓글이 아직 없는 회차를 최근 읽은 순(없으면 최신 회차 순)으로 `--count` 개 골라 회차마다 만듭니다.
+
+```
+python commentflow.py recommend --kind novel --book-id 59094 --count 3   # book_web 기본 3 (웹툰·만화는 추후)
+```
+
 **사이트에 댓글을 등록하지 않습니다.** `/comment_list` 에서 댓글을 고쳐 저장하고 **[연동]** 을 누르면
 댓글이 클립보드에 복사되고 원글 회차 페이지가 열립니다. 붙여넣고 등록 버튼은 직접 누른 뒤 **[등록완료]** 로 표시합니다.
 
-Claude API 설정은 `config.ini` 의 `[anthropic]` 섹션입니다 (`pip install -r requirements.txt` 로 `anthropic` 설치).
-`api_key` 를 비우면 `ANTHROPIC_API_KEY` 환경변수 / `ant auth login` 프로필을 씁니다.
-기본 모델은 `claude-opus-5-5`, `effort = medium` 이며 거절(refusal) 시 서버 측 대체 모델(`fallbacks: "default"`)로 다시 시도합니다.
+Gemini API 설정은 `config.ini` 의 `[gemini]` 섹션입니다 (`pip install -r requirements.txt` 로 `google-genai` 설치).
+키는 [Google AI Studio](https://aistudio.google.com/apikey) 에서 무료 발급합니다.
+`api_key` 를 비우면 `GEMINI_API_KEY` 환경변수를 씁니다. 기본(시작) 모델은 `gemini-3.5-flash-lite` 입니다.
+
+무료 한도(429)나 모델 종료(404)가 나면 같은 회차를 다음 모델로 다시 시도합니다.
+우선순위: `3.5-flash-lite` → `3.5-flash` → `3.1-flash-lite` → `3.1-flash` → `2.5-flash-lite` → `2.5-flash` → `2.5-pro`
+(`config.ini` 의 `models=` 로 목록을 바꿀 수 있습니다.)

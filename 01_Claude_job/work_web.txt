@@ -72,5 +72,44 @@ book_web 에 "추천 댓글" 페이지를 추가해줘.
   cd D:\workspaces\github\onebabo\CommentFlow
   (브랜치 worktree-comment-recommend 병합 또는 checkout 후)
   pip install -r requirements.txt
-  config.example.ini → config.ini 복사 후 [mysql] 비밀번호, [anthropic] api_key 입력
+  config.example.ini → config.ini 복사 후 [mysql] 비밀번호, [gemini] api_key 입력
+  (Gemini 무료 키: https://aistudio.google.com/apikey )
   python commentflow.py recommend --kind novel --count 1     ← 1건으로 먼저 동작 확인
+
+
+════════════════════════════════════════════════════════════════
+[book_web 요청 명령어 2] — /comment_list 작품 아이디로 댓글 생성 · 10개 노출
+(CommentFlow 쪽은 준비됨: recommend --book-id 옵션 추가)
+
+※ book_web 작업 트리에 이미 미커밋 변경(src/app/comment_list/page.tsx 의 "ID 입력 + 조회" 폼,
+   src/lib/comment-recommend.ts 의 fetchCommentRecommends(kind, page, workId))이 있다. 그걸 이어서 작업해줘.
+
+────────────────────────────────────────────────────────────────
+
+/comment_list 를 아래처럼 바꿔줘.
+
+변경 1) 노출 개수 20 → 10
+   - 추천 댓글 저장 내역 최신순 10개씩 페이징 (COMMENT_LIST_PAGE_SIZE = 10)
+   - [댓글 생성] 기본 생성 개수도 10 (--count 10). 안내 문구의 "20개" 표기도 함께 수정
+     (Gemini 무료 티어는 모델당 하루 20회라 20개씩 돌리면 한 번에 소진됨)
+
+변경 2) 작품 아이디 입력폼 값으로 [댓글 생성]
+   - 입력폼(?work=<id>)에 아이디가 있으면 [댓글 생성] 시 그 값을 함께 전달
+       python commentflow.py recommend --kind <현재 탭> --count 10 --book-id <id>
+       → 그 작품에서만, 추천 댓글이 없는 회차를 최근 읽은 순으로 최대 10개 생성
+   - 아이디가 없으면 기존처럼 전체 대상
+       python commentflow.py recommend --kind <현재 탭> --count 10
+   - CommentGenerateButton 에 workId prop 추가 → 생성 API 요청 body 에 workId 포함
+     → 서버(startCommentGenerate 등)에서 양의 정수만 허용해 args 에 "--book-id", String(workId) 추가
+   - 버튼 문구: 아이디 지정 시 "[ID 12345 댓글 생성]" 처럼 대상이 보이게
+   - 생성 중 목록 자동 새로고침은 현재 ?work 필터를 유지
+   - 작품을 못 찾으면 파이썬 로그에 "작품 ID … 를 찾을 수 없습니다." 가 남으니 로그 마지막 줄 표시로 충분
+
+마무리
+   - npm run lint / npm run build 통과 확인
+   - work_ai/YYYY-MM-DD_NNN.html 작업 기록 남기기 (프로젝트 규칙)
+   - 커밋 (master 병합·push 는 내가 확인 후 직접)
+
+────────────────────────────────────────────────────────────────
+[CommentFlow 동작 확인]
+  python commentflow.py recommend --kind novel --book-id 59094 --count 1

@@ -3,14 +3,16 @@
 1) 추천 댓글이 아직 없는 보유 작품을 랜덤으로 N개 고르고
    - 소설: book_work_list (used='Y'), 본문이 수집된 회차가 있는 작품
    - 웹툰/만화: {toon,manhwa}_info, 이미지가 수집된 회차가 있고 수집 보류가 아닌 작품
-2) 작품마다 최근 읽은 회차(없으면 수집된 최신 회차)를 Claude 로 분석해
+2) 작품마다 최근 읽은 회차(없으면 수집된 최신 회차)를 Gemini 로 분석해
    - 소설: 본문 텍스트 (book_info_chapter.content)
    - 웹툰/만화: 회차 이미지 일부 ({kind}_episode_image.file_path, 최대 MAX_IMAGES 장)
 3) 사이트 댓글 규정(rules.py)을 통과한 감상 댓글만 book_comment_recommend 에 저장합니다.
 
+work_id(--book-id)를 주면 그 작품만 대상으로, 추천 댓글이 아직 없는 회차를
+최근 읽은 순(없으면 최신 회차 순)으로 최대 N개 골라 회차마다 추천 댓글을 만듭니다.
+
 사이트에 댓글을 등록하지는 않습니다. 등록은 /comment_list 에서 [연동] 후 사용자가 직접 합니다.
 """
-import base64
 import configparser
 import json
 import os
@@ -22,13 +24,24 @@ import pymysql.cursors
 import rules
 from db import config_path
 
-DEFAULT_MODEL = "claude-opus-5-5"
-DEFAULT_EFFORT = "medium"
+DEFAULT_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_ORIGIN = "https://toki35.com"
 PENDING_TITLE_PREFIX = "[등록대기]"
 MAX_ATTEMPTS = 2
 MAX_IMAGES = 8
 MAX_IMAGE_BYTES = 4_500_000  # API 이미지 1장 한도(5MB) 아래로
+MAX_NOVEL_CHARS = 100_000  # 무료 티어·요청 크기 여유
+
+# 무료 한도(429)·모델 불가(404) 시 이 순서로 전환 (config [gemini] models 로 덮어쓸 수 있음)
+MODEL_PRIORITY = [
+    "gemini-3.5-flash-lite",
+    "gemini-3.5-flash",
+    "gemini-3.1-flash-lite",
+    "gemini-3.1-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+]
 
 # kind → 화면 표기 · 사이트 URL 경로 · 테이블 접두어 · 작품 ID 컬럼
 KINDS = {
@@ -63,29 +76,106 @@ OUTPUT_SCHEMA = {
         "comment": {"type": "string", "description": "규정을 지킨 감상 댓글"},
     },
     "required": ["summary", "comment"],
-    "additionalProperties": False,
 }
 
 
-def load_anthropic_config() -> dict:
-    """config.ini [anthropic] (api_key, model, effort). api_key 가 없으면 SDK 기본 인증(ANTHROPIC_API_KEY 등)."""
+def _parse_model_list(raw: str) -> list[str]:
+    """쉼표·세미콜론·줄바꿈으로 구분된 모델 ID 목록."""
+    parts: list[str] = []
+    for chunk in (raw or "").replace(";", ",").replace("\n", ",").split(","):
+        name = chunk.strip()
+        if name and name not in parts:
+            parts.append(name)
+    return parts
+
+
+def load_gemini_config() -> dict:
+    """config.ini [gemini] (api_key, model, models). api_key 가 없으면 GEMINI_API_KEY 환경변수.
+
+    model 은 시작 모델, models 는 한도 소진 시 전환 우선순위(미지정이면 MODEL_PRIORITY).
+    """
     parser = configparser.ConfigParser(interpolation=None)
     parser.read(config_path(), encoding="utf-8")
-    section = parser["anthropic"] if parser.has_section("anthropic") else {}
+    section = parser["gemini"] if parser.has_section("gemini") else {}
+    preferred = (section.get("model", "") or "").strip() or DEFAULT_MODEL
+    models = _parse_model_list(section.get("models", "") or "") or list(MODEL_PRIORITY)
+    if preferred in models:
+        models = [preferred] + [m for m in models if m != preferred]
+    else:
+        models = [preferred] + models
     return {
         "api_key": (section.get("api_key", "") or "").strip() or None,
-        "model": (section.get("model", "") or "").strip() or DEFAULT_MODEL,
-        "effort": (section.get("effort", "") or "").strip() or DEFAULT_EFFORT,
+        "model": models[0],
+        "models": models,
     }
 
 
 def make_client(cfg: dict):
-    import anthropic
+    from google import genai
 
-    if not cfg["api_key"] and not os.environ.get("ANTHROPIC_API_KEY"):
-        print("[주의] config.ini [anthropic] api_key 와 ANTHROPIC_API_KEY 가 모두 비어 있습니다. "
-              "ant auth login 프로필이 없으면 인증 오류가 납니다.", flush=True)
-    return anthropic.Anthropic(api_key=cfg["api_key"]) if cfg["api_key"] else anthropic.Anthropic()
+    api_key = cfg["api_key"] or (os.environ.get("GEMINI_API_KEY") or "").strip() or None
+    if not api_key:
+        raise SystemExit(
+            "Gemini API 키가 없습니다. https://aistudio.google.com/apikey 에서 무료 키를 발급해 "
+            "config.ini [gemini] api_key 에 넣거나 GEMINI_API_KEY 환경변수를 설정하세요."
+        )
+    return genai.Client(api_key=api_key)
+
+
+def _error_status_code(err: BaseException) -> int | None:
+    code = getattr(err, "code", None) or getattr(err, "status_code", None)
+    if isinstance(code, int):
+        return code
+    # google.genai.errors.ClientError: details 또는 message 에 code 가 들어 있음
+    details = getattr(err, "details", None)
+    if isinstance(details, dict):
+        nested = details.get("error") if isinstance(details.get("error"), dict) else details
+        if isinstance(nested, dict) and isinstance(nested.get("code"), int):
+            return nested["code"]
+    return None
+
+
+def is_quota_exhausted(err: BaseException) -> bool:
+    """무료/유료 할당량·분당 한도 소진(429 RESOURCE_EXHAUSTED)."""
+    code = _error_status_code(err)
+    text = str(err).upper()
+    return (
+        code == 429
+        or "RESOURCE_EXHAUSTED" in text
+        or ("QUOTA" in text and "EXCEED" in text)
+    )
+
+
+def is_model_unavailable(err: BaseException) -> bool:
+    """모델 없음·종료(404 NOT_FOUND / no longer available)."""
+    code = _error_status_code(err)
+    text = str(err).lower()
+    return code == 404 or "not_found" in text or "no longer available" in text
+
+
+class ModelSession:
+    """실행 중 현재 모델 추적. 한도·404 시 다음 우선순위 모델로 전환."""
+
+    def __init__(self, models: list[str]):
+        if not models:
+            raise ValueError("모델 목록이 비어 있습니다.")
+        self.models = list(models)
+        self.index = 0
+
+    @property
+    def current(self) -> str:
+        return self.models[self.index]
+
+    def advance(self, reason: str) -> str | None:
+        """현재 모델을 포기하고 다음으로. 더 없으면 None."""
+        old = self.current
+        if self.index + 1 >= len(self.models):
+            print(f"[모델] {old} - {reason}. 남은 후보 없음.", flush=True)
+            return None
+        self.index += 1
+        nxt = self.current
+        print(f"[모델] {old} - {reason} -> {nxt} 로 전환", flush=True)
+        return nxt
 
 
 def episode_origin(source_url: str | None) -> str:
@@ -139,16 +229,15 @@ def pick_works(cursor, kind: str, count: int) -> list[dict]:
     return cursor.fetchall()
 
 
-def pick_episode(cursor, kind: str, work_id: int) -> dict | None:
-    """최근 읽은 회차(읽은 기록이 없으면 수집된 최신 회차) → {episode_code, episode_no, episode_title, content?}"""
+def pick_work(cursor, kind: str, work_id: int) -> dict | None:
+    """지정한 작품 1개 → {work_id, title, source_url} (추천·초안 기록·수집 보류 여부는 따지지 않음)"""
     if kind == "novel":
         cursor.execute(
             """
-            SELECT episode_code, episode_no, episode_title, content
-              FROM book_info_chapter
-             WHERE book_id = %s AND has_content = 1
-             ORDER BY (read_yn = 'Y') DESC, read_at DESC, episode_no DESC
-             LIMIT 1
+            SELECT w.book_id AS work_id, COALESCE(i.title, w.title) AS title, w.source_url
+              FROM book_work_list AS w
+              LEFT JOIN book_info AS i ON i.book_id = w.book_id
+             WHERE w.book_id = %s
             """,
             (work_id,),
         )
@@ -157,16 +246,51 @@ def pick_episode(cursor, kind: str, work_id: int) -> dict | None:
     t, idc = KINDS[kind]["table"], KINDS[kind]["id"]
     cursor.execute(
         f"""
-        SELECT e.episode_code, e.episode_no, e.episode_title
-          FROM {t}_episode AS e
-          LEFT JOIN {t}_episode_read AS r ON r.{idc} = e.{idc} AND r.episode_no = e.episode_no
-         WHERE e.{idc} = %s AND e.has_images = 1
-         ORDER BY (r.{idc} IS NOT NULL) DESC, r.read_at DESC, e.episode_no DESC
-         LIMIT 1
+        SELECT t.{idc} AS work_id, t.title, COALESCE(w.source_url, t.source_url) AS source_url
+          FROM {t}_info AS t
+          LEFT JOIN {t}_work_list AS w ON w.{idc} = t.{idc}
+         WHERE t.{idc} = %s
         """,
         (work_id,),
     )
     return cursor.fetchone()
+
+
+def pick_episodes(cursor, kind: str, work_id: int, limit: int = 1) -> list[dict]:
+    """추천 댓글이 없는 회차를 최근 읽은 순(읽은 기록이 없으면 수집된 최신 순)으로
+    → [{episode_code, episode_no, episode_title, content?}]"""
+    if kind == "novel":
+        cursor.execute(
+            """
+            SELECT c.episode_code, c.episode_no, c.episode_title, c.content
+              FROM book_info_chapter AS c
+             WHERE c.book_id = %s AND c.has_content = 1
+               AND NOT EXISTS (SELECT 1 FROM book_comment_recommend AS r
+                                WHERE r.kind = 'novel' AND r.work_id = c.book_id
+                                  AND r.episode_code = c.episode_code)
+             ORDER BY (c.read_yn = 'Y') DESC, c.read_at DESC, c.episode_no DESC
+             LIMIT %s
+            """,
+            (work_id, limit),
+        )
+        return cursor.fetchall()
+
+    t, idc = KINDS[kind]["table"], KINDS[kind]["id"]
+    cursor.execute(
+        f"""
+        SELECT e.episode_code, e.episode_no, e.episode_title
+          FROM {t}_episode AS e
+          LEFT JOIN {t}_episode_read AS r ON r.{idc} = e.{idc} AND r.episode_no = e.episode_no
+         WHERE e.{idc} = %s AND e.has_images = 1
+           AND NOT EXISTS (SELECT 1 FROM book_comment_recommend AS cr
+                            WHERE cr.kind = %s AND cr.work_id = e.{idc}
+                              AND cr.episode_code = e.episode_code)
+         ORDER BY (r.{idc} IS NOT NULL) DESC, r.read_at DESC, e.episode_no DESC
+         LIMIT %s
+        """,
+        (work_id, kind, limit),
+    )
+    return cursor.fetchall()
 
 
 def image_media_type(data: bytes) -> str | None:
@@ -182,7 +306,7 @@ def image_media_type(data: bytes) -> str | None:
 
 
 def episode_images(cursor, kind: str, episode_code: str) -> list[dict]:
-    """회차 이미지 중 최대 MAX_IMAGES 장을 고르게 골라 API image 블록으로 만듭니다."""
+    """회차 이미지 중 최대 MAX_IMAGES 장을 고르게 골라 {mime_type, data} 목록으로 만듭니다."""
     t = KINDS[kind]["table"]
     cursor.execute(
         f"SELECT file_path FROM {t}_episode_image "
@@ -201,11 +325,7 @@ def episode_images(cursor, kind: str, episode_code: str) -> list[dict]:
         media_type = image_media_type(data)
         if not media_type:
             continue
-        blocks.append({
-            "type": "image",
-            "source": {"type": "base64", "media_type": media_type,
-                       "data": base64.standard_b64encode(data).decode("ascii")},
-        })
+        blocks.append({"mime_type": media_type, "data": data})
     return blocks
 
 
@@ -216,46 +336,71 @@ def episode_heading(episode: dict) -> str:
     return f"{no}화 {title}" if title and title != f"{no}화" else f"{no}화"
 
 
-def analyze_episode(client, cfg: dict, kind: str, work_title: str, episode: dict,
+def analyze_episode(client, models: ModelSession, kind: str, work_title: str, episode: dict,
                     images: list[dict], feedback: str = "") -> dict:
-    """회차 내용을 Claude 로 분석해 {"summary", "comment", "model"} 를 받습니다."""
+    """회차 내용을 Gemini 로 분석해 {"summary", "comment", "model"} 를 받습니다.
+
+    무료 한도(429)·모델 불가(404) 이면 models 우선순위로 바꿔 같은 회차를 재시도합니다.
+    """
+    from google.genai import types
+
     text = f"작품: {work_title}\n회차: {episode_heading(episode)}"
     if kind == "novel":
         system = SYSTEM_PROMPTS["novel"]
-        text += f"\n\n<본문>\n{episode['content']}\n</본문>"
+        body = (episode["content"] or "").strip()
+        if len(body) > MAX_NOVEL_CHARS:
+            body = body[:MAX_NOVEL_CHARS] + "\n…(본문 일부 생략)"
+        text += f"\n\n<본문>\n{body}\n</본문>"
     else:
         system = SYSTEM_PROMPTS["image"].format(label=KINDS[kind]["label"])
         text += f"\n\n위 이미지 {len(images)}장은 이 회차에서 순서대로 고르게 뽑은 장면입니다."
     if feedback:
         text += f"\n\n이전에 쓴 댓글이 규정 검사에서 거절됐습니다: {feedback}\n이 점을 고쳐 다시 쓰세요."
 
-    response = client.beta.messages.create(
-        model=cfg["model"],
-        max_tokens=16000,
-        betas=["server-side-fallback-2026-07-01"],
-        fallbacks="default",
-        system=system,
-        output_config={
-            "effort": cfg["effort"],
-            "format": {"type": "json_schema", "schema": OUTPUT_SCHEMA},
-        },
-        messages=[{"role": "user", "content": [*images, {"type": "text", "text": text}]}],
-    )
-    if response.stop_reason == "refusal":
-        raise RuntimeError("모델이 응답을 거절했습니다.")
-    if response.stop_reason == "max_tokens":
-        raise RuntimeError("응답이 max_tokens 에서 잘렸습니다.")
-    data = json.loads(next((b.text for b in response.content if b.type == "text"), ""))
-    return {
-        "summary": data["summary"].strip(),
-        "comment": data["comment"].strip(),
-        "model": response.model,
-    }
+    parts: list = [
+        types.Part.from_bytes(data=img["data"], mime_type=img["mime_type"]) for img in images
+    ]
+    parts.append(text)
+
+    while True:
+        model = models.current
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=parts,
+                config={
+                    "system_instruction": system,
+                    "response_mime_type": "application/json",
+                    "response_json_schema": OUTPUT_SCHEMA,
+                    "temperature": 0.8,
+                },
+            )
+        except Exception as err:
+            if is_quota_exhausted(err):
+                if models.advance("무료/할당량 한도(429)") is None:
+                    raise
+                continue
+            if is_model_unavailable(err):
+                if models.advance("모델 사용 불가(404)") is None:
+                    raise
+                continue
+            raise
+
+        raw = (response.text or "").strip()
+        if not raw:
+            raise RuntimeError("모델 응답이 비어 있습니다.")
+        data = json.loads(raw)
+        model_name = getattr(response, "model_version", None) or model
+        return {
+            "summary": data["summary"].strip(),
+            "comment": data["comment"].strip(),
+            "model": model_name,
+        }
 
 
-def recommend_for_work(cursor, client, cfg: dict, kind: str, work: dict) -> tuple[bool, str]:
-    """작품 1개 처리 — (저장 여부, 결과 메시지)를 반환합니다."""
-    episode = pick_episode(cursor, kind, work["work_id"])
+def recommend_for_episode(cursor, client, models: ModelSession, kind: str, work: dict,
+                          episode: dict | None) -> tuple[bool, str]:
+    """회차 1개 처리 — (저장 여부, 결과 메시지)를 반환합니다."""
     images: list[dict] = []
     if kind == "novel":
         if not episode or not (episode["content"] or "").strip():
@@ -268,7 +413,7 @@ def recommend_for_work(cursor, client, cfg: dict, kind: str, work: dict) -> tupl
 
     feedback = ""
     for _ in range(MAX_ATTEMPTS):
-        result = analyze_episode(client, cfg, kind, work["title"], episode, images, feedback)
+        result = analyze_episode(client, models, kind, work["title"], episode, images, feedback)
         errors, _warnings = rules.check(result["comment"])
         if not errors:
             break
@@ -295,24 +440,41 @@ def recommend_for_work(cursor, client, cfg: dict, kind: str, work: dict) -> tupl
     return True, f"{episode_heading(episode)} 저장: {result['comment']}"
 
 
-def run(conn, kind: str, count: int) -> int:
-    """추천 댓글을 만들고 저장한 건수를 반환합니다. 작품마다 바로 commit 해 화면에서 진행이 보입니다."""
+def run(conn, kind: str, count: int, work_id: int | None = None) -> int:
+    """추천 댓글을 만들고 저장한 건수를 반환합니다. 건마다 바로 commit 해 화면에서 진행이 보입니다.
+
+    work_id 가 없으면 추천 댓글이 없는 작품 count 개(작품당 1회차),
+    있으면 그 작품에서 추천 댓글이 없는 회차 count 개를 대상으로 합니다."""
     if kind not in KINDS:
         raise SystemExit(f"알 수 없는 구분: {kind} (novel / toon / manhwa)")
 
-    cfg = load_anthropic_config()
+    cfg = load_gemini_config()
     client = make_client(cfg)
+    models = ModelSession(cfg["models"])
+    label = KINDS[kind]["label"]
     saved = 0
     with conn.cursor(pymysql.cursors.DictCursor) as cursor:
-        works = pick_works(cursor, kind, count)
-        print(f"[{KINDS[kind]['label']}] 대상 작품 {len(works)}개 (요청 {count}개, 모델 {cfg['model']})", flush=True)
-        for i, work in enumerate(works, 1):
+        if work_id:
+            work = pick_work(cursor, kind, work_id)
+            if not work:
+                print(f"[{label}] 작품 ID {work_id} 를 찾을 수 없습니다.", flush=True)
+                print("완료: 0건 저장", flush=True)
+                return 0
+            jobs = [(work, ep) for ep in pick_episodes(cursor, kind, work_id, count)]
+            print(f"[{label}] {work_id} {work['title']} — 추천 없는 회차 {len(jobs)}개 "
+                  f"(요청 {count}개, 시작 모델 {models.current})", flush=True)
+        else:
+            works = pick_works(cursor, kind, count)
+            jobs = [(w, next(iter(pick_episodes(cursor, kind, w["work_id"])), None)) for w in works]
+            print(f"[{label}] 대상 작품 {len(jobs)}개 (요청 {count}개, 시작 모델 {models.current})", flush=True)
+        print(f"[모델] 전환 우선순위: {' -> '.join(cfg['models'])}", flush=True)
+        for i, (work, episode) in enumerate(jobs, 1):
             try:
-                ok, message = recommend_for_work(cursor, client, cfg, kind, work)
+                ok, message = recommend_for_episode(cursor, client, models, kind, work, episode)
                 saved += ok
-            except Exception as err:  # 작품 하나 실패해도 나머지는 계속
+            except Exception as err:  # 하나 실패해도 나머지는 계속
                 message = f"오류: {type(err).__name__}: {err}"
             conn.commit()
-            print(f"[{i}/{len(works)}] {work['work_id']} {work['title']} — {message}", flush=True)
-    print(f"완료: {saved}건 저장", flush=True)
+            print(f"[{i}/{len(jobs)}] {work['work_id']} {work['title']} — {message}", flush=True)
+    print(f"완료: {saved}건 저장 (마지막 모델 {models.current})", flush=True)
     return saved

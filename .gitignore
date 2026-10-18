@@ -8,6 +8,7 @@ venv/
 # Secrets / local config (절대 커밋 금지)
 .env
 config.ini
+config_*.ini
 sftp.json
 .vscode/
 .cursor/
@@ -17,3 +18,4 @@ TEMP_*/
 work/
 nouse/
 _web_log/
+.claude/
