@@ -3,13 +3,13 @@
 1) 추천 댓글이 아직 없는 보유 작품을 랜덤으로 N개 고르고
    - 소설: book_work_list (used='Y'), 본문이 수집된 회차가 있는 작품
    - 웹툰/만화: {toon,manhwa}_info, 이미지가 수집된 회차가 있고 수집 보류가 아닌 작품
-2) 작품마다 최근 읽은 회차(없으면 수집된 최신 회차)를 Gemini 로 분석해
+2) 작품마다 읽은 지 가장 오래된 회차(없으면 수집된 최신 회차)를 Gemini 로 분석해
    - 소설: 본문 텍스트 (book_info_chapter.content)
    - 웹툰/만화: 회차 이미지 일부 ({kind}_episode_image.file_path, 최대 MAX_IMAGES 장)
 3) 사이트 댓글 규정(rules.py)을 통과한 감상 댓글만 book_comment_recommend 에 저장합니다.
 
 work_id(--book-id)를 주면 그 작품만 대상으로, 추천 댓글이 아직 없는 회차를
-최근 읽은 순(없으면 최신 회차 순)으로 최대 N개 골라 회차마다 추천 댓글을 만듭니다.
+읽은 지 오래된 순(없으면 최신 회차 순)으로 최대 N개 골라 회차마다 추천 댓글을 만듭니다.
 
 사이트에 댓글을 등록하지는 않습니다. 등록은 /comment_list 에서 [연동] 후 사용자가 직접 합니다.
 """
@@ -257,7 +257,8 @@ def pick_work(cursor, kind: str, work_id: int) -> dict | None:
 
 
 def pick_episodes(cursor, kind: str, work_id: int, limit: int = 1) -> list[dict]:
-    """추천 댓글이 없는 회차를 최근 읽은 순(읽은 기록이 없으면 수집된 최신 순)으로
+    """추천 댓글이 없는 회차를 읽은 지 오래된 순(읽은 시각이 같으면 앞 회차부터)으로,
+    읽은 회차가 모자라면 읽지 않은 회차를 수집된 최신 순으로
     → [{episode_code, episode_no, episode_title, content?}]"""
     if kind == "novel":
         cursor.execute(
@@ -268,7 +269,10 @@ def pick_episodes(cursor, kind: str, work_id: int, limit: int = 1) -> list[dict]
                AND NOT EXISTS (SELECT 1 FROM book_comment_recommend AS r
                                 WHERE r.kind = 'novel' AND r.work_id = c.book_id
                                   AND r.episode_code = c.episode_code)
-             ORDER BY (c.read_yn = 'Y') DESC, c.read_at DESC, c.episode_no DESC
+             ORDER BY (c.read_yn = 'Y') DESC,
+                      CASE WHEN c.read_yn = 'Y' THEN c.read_at END,
+                      CASE WHEN c.read_yn = 'Y' THEN c.episode_no END,
+                      c.episode_no DESC
              LIMIT %s
             """,
             (work_id, limit),
@@ -285,7 +289,9 @@ def pick_episodes(cursor, kind: str, work_id: int, limit: int = 1) -> list[dict]
            AND NOT EXISTS (SELECT 1 FROM book_comment_recommend AS cr
                             WHERE cr.kind = %s AND cr.work_id = e.{idc}
                               AND cr.episode_code = e.episode_code)
-         ORDER BY (r.{idc} IS NOT NULL) DESC, r.read_at DESC, e.episode_no DESC
+         ORDER BY (r.{idc} IS NOT NULL) DESC, r.read_at,
+                  CASE WHEN r.{idc} IS NOT NULL THEN e.episode_no END,
+                  e.episode_no DESC
          LIMIT %s
         """,
         (work_id, kind, limit),

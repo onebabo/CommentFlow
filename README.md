@@ -42,13 +42,13 @@ python commentflow.py recommend --kind novel --count 20   # novel:소설, toon:�
 
 1. 추천 댓글이 아직 없는 보유 작품을 랜덤으로 `--count` 개 고릅니다
    (소설: `book_work_list` used='Y', 웹툰·만화: `{toon,manhwa}_info` 중 수집 보류 제외).
-2. 작품마다 최근 읽은 회차(없으면 수집된 최신 회차)를 Gemini 로 분석합니다
+2. 작품마다 읽은 지 가장 오래된 회차(없으면 수집된 최신 회차)를 Gemini 로 분석합니다
    (소설: 본문 텍스트, 웹툰·만화: 회차 이미지 최대 8장).
 3. `rules.py` 규정 검사를 통과한 댓글만 `book_comment_recommend` 테이블에 저장합니다
    (`comment_sql/01_comment_recommend_테이블생성.sql`, 접속 시 자동 생성).
 
 작품 ID 를 주면 그 작품만 대상으로 합니다 (`/comment_list` 의 작품 아이디 입력값).
-추천 댓글이 아직 없는 회차를 최근 읽은 순(없으면 최신 회차 순)으로 `--count` 개 골라 회차마다 만듭니다.
+추천 댓글이 아직 없는 회차를 읽은 지 오래된 순(같은 시각이면 앞 회차부터, 읽은 기록이 없으면 최신 회차 순)으로 `--count` 개 골라 회차마다 만듭니다.
 
 ```
 python commentflow.py recommend --kind novel --book-id 59094 --count 3   # book_web 기본 3 (웹툰·만화는 추후)

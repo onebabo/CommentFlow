@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>recommend 처리 절차</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --card: #ffffff; --text: #1f2328; --muted: #656d76;
+    --line: #e2e2de; --accent: #2f6fdb; --code-bg: #f0f1f3;
+    --ok: #1a7f37; --warn: #9a6700; --bad: #cf222e;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c; --card: #1e2127; --text: #e6e6e6; --muted: #9aa3ad;
+      --line: #2e323a; --accent: #6ea2ff; --code-bg: #262a31;
+      --ok: #4ac26b; --warn: #d4a72c; --bad: #ff7b72;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.7 "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif;
+    padding: 32px 16px 64px;
+  }
+  main { max-width: 920px; margin: 0 auto; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 28px; }
+  h2 {
+    font-size: 18px; margin: 40px 0 12px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+  }
+  h3 { font-size: 15px; margin: 22px 0 6px; }
+  nav {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px 18px; margin-bottom: 8px;
+  }
+  nav ol { margin: 0; padding-left: 20px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: Consolas, "D2Coding", monospace; font-size: 13px;
+    background: var(--code-bg); padding: 1px 5px; border-radius: 4px;
+  }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px 14px; overflow-x: auto; margin: 8px 0 14px; line-height: 1.55;
+  }
+  pre code { background: none; padding: 0; }
+  .note {
+    border-left: 4px solid var(--accent); background: var(--card);
+    padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 12px 0;
+  }
+  .note.warn { border-color: var(--warn); }
+  .note.bad { border-color: var(--bad); }
+  .flow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
+  .flow span {
+    background: var(--card); border: 1px solid var(--line); border-radius: 6px;
+    padding: 6px 12px;
+  }
+  .flow span.me { border-color: var(--accent); font-weight: bold; }
+  .flow span.drop { border-style: dashed; border-color: var(--bad); }
+  .flow b { color: var(--muted); }
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; background: var(--card); margin: 8px 0 14px; }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--code-bg); font-weight: 600; white-space: nowrap; }
+  tr.pick td { background: color-mix(in srgb, var(--accent) 10%, var(--card)); }
+  ol.steps { padding-left: 0; list-style: none; counter-reset: s; margin: 10px 0 16px; }
+  ol.steps > li {
+    counter-increment: s; position: relative; background: var(--card);
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px 10px 50px; margin-bottom: 8px;
+  }
+  ol.steps > li::before {
+    content: counter(s); position: absolute; left: 14px; top: 10px;
+    width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--bg);
+    font-size: 13px; font-weight: bold; text-align: center; line-height: 24px;
+  }
+  .fn { color: var(--muted); font-size: 13px; }
+  .ok { color: var(--ok); font-weight: bold; }
+  .bad { color: var(--bad); font-weight: bold; }
+  .warn-t { color: var(--warn); font-weight: bold; }
+  .funnel { margin: 12px 0; }
+  .funnel div {
+    background: var(--card); border: 1px solid var(--line); border-radius: 6px;
+    padding: 8px 14px; margin: 0 auto 6px; text-align: center;
+  }
+  .funnel div small { display: block; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>recommend 처리 절차 상세</h1>
+  <p class="sub"><code>python commentflow.py recommend --kind toon --book-id 8616 --count 3</code> · 코드와 실제 DB 조회로 확인 · 2026-10-18 작성 · 2026-10-19 회차 선정 순서 변경(읽은 지 오래된 순) 반영</p>
+
+  <nav>
+    <ol>
+      <li><a href="#result">먼저 보는 결론: 이 명령의 실제 결과</a></li>
+      <li><a href="#args">명령 인자 해석</a></li>
+      <li><a href="#overall">전체 처리 순서</a></li>
+      <li><a href="#work">작품 확인 (pick_work)</a></li>
+      <li><a href="#select">회차 3개 선정 규칙 (pick_episodes) — 상세</a></li>
+      <li><a href="#process">회차 1건 처리 (recommend_for_episode)</a></li>
+      <li><a href="#output">출력 예시</a></li>
+      <li><a href="#cautions">주의 · 확인 사항</a></li>
+    </ol>
+  </nav>
+
+  <!-- 1 -->
+  <h2 id="result">1. 먼저 보는 결론: 이 명령의 실제 결과</h2>
+  <div class="note bad"><b>8616 은 웹툰이 아니라 소설입니다.</b><br>
+    DB 조회 결과 <code>toon_info</code> 와 <code>manhwa_info</code> 에는 8616 이 없고,
+    <code>book_work_list</code> 에 소설 <b>“검은 늑대”</b>(used='Y')로 있습니다.
+    따라서 <code>--kind toon</code> 으로 실행하면 작품 확인 단계에서 끝나고 <b>Gemini 호출 없이 0건</b>입니다.</div>
+  <pre><code>[웹툰] 작품 ID 8616 를 찾을 수 없습니다.
+완료: 0건 저장</code></pre>
+  <p>이 작품에 추천 댓글을 만들려면 구분을 소설로 지정해야 합니다.</p>
+  <pre><code>python commentflow.py recommend --kind novel --book-id 8616 --count 3</code></pre>
+  <p>그러면 <b>1화 · 2화 · 3화</b> 가 선정됩니다 (<a href="#ex-novel">5-6 실데이터 예시</a>).
+    아래 문서는 <b>웹툰(<code>--kind toon</code>) 처리 절차</b>를 기준으로 설명하고, 소설과 다른 점은 따로 표시합니다.
+    웹툰 실데이터 예시로는 실제 웹툰 <b>17716 “옥탑방 야스킹”</b> 을 사용했습니다.</p>
+
+  <!-- 2 -->
+  <h2 id="args">2. 명령 인자 해석</h2>
+  <div class="table-wrap"><table>
+    <tr><th>인자</th><th>값</th><th>내부 변수</th><th>의미</th></tr>
+    <tr><td><code>recommend</code></td><td>-</td><td><code>func=cmd_recommend</code></td><td>추천 댓글 생성 명령</td></tr>
+    <tr><td><code>--kind</code></td><td><code>toon</code></td><td><code>args.kind</code></td><td>구분. novel(기본) / toon / manhwa. 어떤 테이블에서 작품·회차를 찾을지 결정</td></tr>
+    <tr><td><code>--book-id</code> (별칭 <code>--work-id</code>)</td><td><code>8616</code></td><td><code>args.work_id</code></td><td>이 작품만 대상. kind=toon 이면 <code>toon_id</code> 로 해석</td></tr>
+    <tr><td><code>--count</code></td><td><code>3</code></td><td><code>args.count</code></td><td>작품 지정 모드에서는 <b>그 작품의 회차 개수</b> (작품 개수가 아님). 기본 20</td></tr>
+  </table></div>
+  <p><code>--kind toon</code> 일 때 쓰는 이름표 (<code>KINDS["toon"]</code>):</p>
+  <div class="table-wrap"><table>
+    <tr><th>label</th><th>segment (URL)</th><th>table 접두어</th><th>id 컬럼</th></tr>
+    <tr><td>웹툰</td><td><code>webtoon</code></td><td><code>toon</code> → <code>toon_info</code>, <code>toon_episode</code> …</td><td><code>toon_id</code></td></tr>
+  </table></div>
+
+  <!-- 3 -->
+  <h2 id="overall">3. 전체 처리 순서</h2>
+  <ol class="steps">
+    <li><b>진입</b> <span class="fn">commentflow.main() → cmd_recommend()</span><br>
+      표준출력 UTF-8 설정 후 인자 해석, <code>recommend.run(conn, "toon", 3, 8616)</code> 호출.</li>
+    <li><b>DB 접속</b> <span class="fn">db.get_connection()</span><br>
+      <code>config.ini [mysql]</code> 로 접속 → <code>comment_sql/*.sql</code> 의 <code>CREATE TABLE IF NOT EXISTS</code> 실행 (테이블이 있으면 변화 없음).</li>
+    <li><b>구분 확인</b> — <code>kind</code> 가 novel / toon / manhwa 가 아니면 종료.</li>
+    <li><b>Gemini 준비</b> <span class="fn">load_gemini_config() → make_client() → ModelSession</span><br>
+      <code>config.ini [gemini]</code> 의 api_key (없으면 <code>GEMINI_API_KEY</code> 환경변수), 시작 모델, 전환 우선순위를 읽어 클라이언트 생성.
+      <span class="warn-t">API 키가 없으면 작품 확인 전에 여기서 종료</span>합니다.</li>
+    <li><b>작품 확인</b> <span class="fn">pick_work()</span> — <a href="#work">4장</a>. 없으면 “찾을 수 없습니다 / 완료: 0건 저장” 출력 후 종료. <b>8616 은 여기서 종료</b>.</li>
+    <li><b>회차 선정</b> <span class="fn">pick_episodes(cursor, "toon", 8616, 3)</span> — <a href="#select">5장</a>. 최대 3개를 한 번에 정함.</li>
+    <li><b>시작 안내 출력</b> — 대상 회차 수, 시작 모델, 모델 전환 우선순위.</li>
+    <li><b>회차별 처리 반복</b> <span class="fn">recommend_for_episode()</span> — <a href="#process">6장</a>.
+      건마다 <b>바로 commit</b> 하고 <code>[i/3]</code> 결과 출력. 한 건에서 예외가 나도 “오류: …” 출력 후 다음 건 계속.</li>
+    <li><b>완료</b> — <code>완료: N건 저장 (마지막 모델 …)</code> 출력, 접속 종료 시 남은 변경 commit.</li>
+  </ol>
+
+  <!-- 4 -->
+  <h2 id="work">4. 작품 확인 (pick_work)</h2>
+  <pre><code>SELECT t.toon_id AS work_id, t.title, COALESCE(w.source_url, t.source_url) AS source_url
+  FROM toon_info AS t
+  LEFT JOIN toon_work_list AS w ON w.toon_id = t.toon_id
+ WHERE t.toon_id = 8616</code></pre>
+  <ul>
+    <li>기준 테이블은 <b><code>toon_info</code></b>. 여기에 행이 없으면 작품 없음으로 처리합니다.</li>
+    <li>원글 주소(<code>source_url</code>)는 <code>toon_work_list</code> 값을 우선, 없으면 <code>toon_info</code> 값.</li>
+    <li>작품 지정 모드에서는 다음을 <b>확인하지 않습니다</b>:
+      <code>toon_work_list.used</code>(사용 여부), <code>toon_edit_holds</code>(수집 보류), 이미 추천 댓글이 있는지.
+      (이 조건들은 <code>--book-id</code> 없이 실행하는 랜덤 모드에서만 적용됩니다.)</li>
+  </ul>
+
+  <!-- 5 -->
+  <h2 id="select">5. 회차 3개 선정 규칙 (pick_episodes) — 상세</h2>
+  <p>한 번의 SQL 로 <b>후보를 거르고 → 우선순위로 정렬하고 → 위에서 3개</b>를 자릅니다.</p>
+  <pre><code>SELECT e.episode_code, e.episode_no, e.episode_title
+  FROM toon_episode AS e
+  LEFT JOIN toon_episode_read AS r
+         ON r.toon_id = e.toon_id AND r.episode_no = e.episode_no
+ WHERE e.toon_id = 8616                       -- ① 이 작품의 회차
+   AND e.has_images = 1                       -- ② 이미지 수집 완료
+   AND NOT EXISTS (SELECT 1 FROM book_comment_recommend AS cr
+                    WHERE cr.kind = 'toon' AND cr.work_id = e.toon_id
+                      AND cr.episode_code = e.episode_code)   -- ③ 추천 댓글 없음
+ ORDER BY (r.toon_id IS NOT NULL) DESC,       -- ㉠ 읽은 회차 먼저
+          r.read_at,                          -- ㉡ 읽은 지 오래된 순
+          CASE WHEN r.toon_id IS NOT NULL
+               THEN e.episode_no END,         -- ㉢ (읽은 회차) 같은 시각이면 앞 회차부터
+          e.episode_no DESC                   -- ㉣ (안 읽은 회차) 최신 회차부터
+ LIMIT 3                                      -- --count</code></pre>
+  <div class="note">2026-10-19 변경: 읽은 회차는 <b>최근에 읽은 순 → 읽은 지 오래된 순</b>으로 바뀌었습니다 (<code>recommend.py pick_episodes</code>, 소설·웹툰·만화 공통).</div>
+
+  <div class="funnel">
+    <div style="max-width:100%">작품의 전체 회차 <small><code>toon_episode WHERE toon_id = 8616</code></small></div>
+    <div style="max-width:86%">② 이미지 수집 완료 회차만 <small><code>has_images = 1</code></small></div>
+    <div style="max-width:72%">③ 추천 댓글이 아직 없는 회차만 <small><code>book_comment_recommend</code> 에 같은 회차 없음</small></div>
+    <div style="max-width:58%">㉠~㉣ 우선순위 정렬 <small>읽은 회차(오래 전에 읽은 순) → 안 읽은 회차(최신 순)</small></div>
+    <div style="max-width:44%; border-color: var(--accent); font-weight: bold;">위에서 3개 (LIMIT 3)</div>
+  </div>
+
+  <h3>5-1. 후보 조건 (WHERE)</h3>
+  <div class="table-wrap"><table>
+    <tr><th>조건</th><th>내용</th><th>세부</th></tr>
+    <tr><td>① 작품</td><td><code>e.toon_id = 8616</code></td><td>본편/외전 구분(<code>episode_type</code> MAIN/SIDE)은 따지지 않으므로 <b>외전도 후보</b>가 됩니다.</td></tr>
+    <tr><td>② 이미지 수집 완료</td><td><code>e.has_images = 1</code></td><td><code>has_images</code> 는 계산 컬럼: <code>image_cnt &gt; 0 AND saved_image_cnt &gt;= image_cnt</code> 이면 1.
+      즉 <b>뷰어 기준 이미지 수만큼 로컬 저장이 끝난 회차</b>만 후보. 일부만 받은 회차는 제외됩니다.<br>
+      단, 실제 파일이 지금 디스크에 있는지는 여기서 확인하지 않습니다 (<a href="#process">6장</a>에서 확인).</td></tr>
+    <tr><td>③ 추천 없음</td><td><code>NOT EXISTS book_comment_recommend</code></td><td>(kind='toon', work_id, episode_code) 가 같은 행이 있으면 제외.
+      <b>상태(R/S/C/P)와 무관</b> — 이미 등록완료(P)된 회차도, 수정 중(S)인 회차도 모두 제외.
+      추천 행을 삭제하면 다시 후보가 됩니다.</td></tr>
+  </table></div>
+
+  <h3>5-2. 우선순위 (ORDER BY)</h3>
+  <div class="table-wrap"><table>
+    <tr><th>순서</th><th>정렬 키</th><th>의미</th></tr>
+    <tr><td>㉠</td><td><code>(r.toon_id IS NOT NULL) DESC</code></td>
+      <td><code>toon_episode_read</code> 에 읽은 기록이 있는 회차(1)를 기록이 없는 회차(0)보다 먼저.<br>
+        읽음 기록은 <b><code>episode_no</code> 로 연결</b>합니다 (episode_code 아님). <code>toon_episode_read</code> 의 PK 가 (toon_id, episode_no) 라서 회차가 중복으로 나오지는 않습니다.</td></tr>
+    <tr><td>㉡</td><td><code>r.read_at</code> (오름차순)</td>
+      <td>읽은 회차끼리는 <b>읽은 지 가장 오래된 회차 먼저</b>.<br>
+        읽지 않은 회차는 read_at 이 NULL 이라 모두 같은 값으로 취급 → 다음 키로 넘어감.</td></tr>
+    <tr><td>㉢</td><td><code>CASE WHEN 읽음 THEN e.episode_no END</code> (오름차순)</td>
+      <td>읽은 회차 중 <b>같은 초에 여러 회차를 읽은 경우</b>(read_at 동일) <b>앞 회차(번호 작은 순)부터</b>.<br>
+        읽지 않은 회차는 NULL 이라 영향 없음.</td></tr>
+    <tr><td>㉣</td><td><code>e.episode_no DESC</code></td>
+      <td>읽지 않은 회차끼리는 <b>회차 번호가 큰(최신) 회차 먼저</b> (변경 없음).</td></tr>
+  </table></div>
+
+  <h3>5-3. 경우별로 정리한 선정 결과</h3>
+  <div class="table-wrap"><table>
+    <tr><th>상황</th><th>선정되는 3개</th></tr>
+    <tr><td>읽은 회차가 3개 이상 (추천 없는 것 기준)</td><td><b>읽은 지 가장 오래된 3개 회차</b> (같은 시각에 읽었으면 앞 회차부터)</td></tr>
+    <tr><td>읽은 회차가 1~2개</td><td>읽은 회차 전부(오래된 순) + 나머지는 읽지 않은 회차 중 번호가 큰 순</td></tr>
+    <tr><td>읽은 기록이 전혀 없음</td><td>이미지 수집 완료된 회차 중 번호가 가장 큰 3개 (최신 3화)</td></tr>
+    <tr><td>후보가 3개 미만</td><td>있는 만큼만 (0개면 “추천 없는 회차 0개” 출력 후 바로 완료)</td></tr>
+    <tr><td>같은 명령을 다시 실행</td><td>방금 저장된 회차는 ③ 으로 빠지므로 <b>그다음 3개</b>가 선정됨</td></tr>
+  </table></div>
+
+  <h3>5-4. 선정 후 탈락 — 빈자리를 채우지 않음</h3>
+  <p>3개는 <b>처리 시작 전에 한 번에 확정</b>됩니다. 처리 중 한 회차가 건너뛰어지거나 오류가 나도
+    다음 순위 회차로 <b>대신 채우지 않습니다</b>. 그래서 <code>--count 3</code> 이라도 저장은 0~3건입니다.</p>
+  <div class="flow">
+    <span class="me">선정 3개</span><b>→</b>
+    <span class="drop">이미지 파일 없음 → 건너뜀</span>
+    <span class="drop">규정 2회 실패 → 저장 안 함</span>
+    <span class="drop">API 오류 → 오류</span>
+    <span class="drop">이미 있음(동시 실행) → 건너뜀</span>
+  </div>
+
+  <h3>5-5. 웹툰 실데이터 예시 — 17716 “옥탑방 야스킹”</h3>
+  <p>전체 86회차, 모두 has_images=1, 추천 0건, 읽은 기록 72건 (1~72화). 변경된 <code>pick_episodes</code> 를 <code>limit 5</code> 로 호출한 결과:</p>
+  <div class="table-wrap"><table>
+    <tr><th>순위</th><th>episode_no</th><th>episode_code</th><th>읽음</th><th>read_at</th><th>선정</th></tr>
+    <tr class="pick"><td>1</td><td>1</td><td><code>1487321</code></td><td>Y</td><td>2026-10-17 13:45:38</td><td class="ok">선정</td></tr>
+    <tr class="pick"><td>2</td><td>2</td><td><code>1487322</code></td><td>Y</td><td>13:45:40</td><td class="ok">선정</td></tr>
+    <tr class="pick"><td>3</td><td>3</td><td><code>1487323</code></td><td>Y</td><td>13:47:21</td><td class="ok">선정</td></tr>
+    <tr><td>4</td><td>4</td><td><code>1487324</code></td><td>Y</td><td>13:48:37</td><td>다음 실행</td></tr>
+    <tr><td>5</td><td>5</td><td><code>1487325</code></td><td>Y</td><td>13:48:41</td><td>다음 실행</td></tr>
+  </table></div>
+  <p>변경 전에는 72·71·70화(최근에 읽은 순)가 선정됐습니다. 73~86화는 이미지가 있어도 읽은 기록이 없어 ㉠ 에서 뒤로 밀리고,
+    읽은 72개 회차를 모두 처리한 뒤에야 86화부터 내려가며 선정됩니다.</p>
+
+  <h3 id="ex-novel">5-6. 소설 실데이터 예시 — 8616 “검은 늑대” (<code>--kind novel</code>)</h3>
+  <p>전체 553회차(모두 본문 있음), 읽음 75건, 추천 15건(54~70화). 소설은 읽음 여부를 <code>book_info_chapter.read_yn / read_at</code> 에서 직접 봅니다.</p>
+  <div class="table-wrap"><table>
+    <tr><th>순위</th><th>episode_no</th><th>episode_code</th><th>read_at</th><th>정렬 근거</th></tr>
+    <tr class="pick"><td>1</td><td>1</td><td>1223032</td><td>2026-10-18 00:06:27</td><td rowspan="3">가장 오래된 read_at 에 여러 회차가 <b>같은 초</b> → ㉢ 앞 회차(번호 작은 순)부터</td></tr>
+    <tr class="pick"><td>2</td><td>2</td><td>1223033</td><td>2026-10-18 00:06:27</td></tr>
+    <tr class="pick"><td>3</td><td>3</td><td>1223034</td><td>2026-10-18 00:06:27</td></tr>
+  </table></div>
+  <p class="fn">변경 전에는 최근에 읽은 75·74·73화가 선정됐습니다.</p>
+  <div class="table-wrap"><table>
+    <tr><th>항목</th><th>toon / manhwa</th><th>novel</th></tr>
+    <tr><td>회차 테이블</td><td><code>{t}_episode</code></td><td><code>book_info_chapter</code></td></tr>
+    <tr><td>내용 있음 조건</td><td><code>has_images = 1</code></td><td><code>has_content = 1</code></td></tr>
+    <tr><td>읽음 판단</td><td><code>{t}_episode_read</code> 에 행 존재 (episode_no 로 연결)</td><td><code>read_yn = 'Y'</code></td></tr>
+    <tr><td>분석 입력</td><td>회차 이미지 최대 8장</td><td>본문 텍스트 (10만 자까지)</td></tr>
+  </table></div>
+
+  <!-- 6 -->
+  <h2 id="process">6. 회차 1건 처리 (recommend_for_episode)</h2>
+  <ol class="steps">
+    <li><b>이미지 목록 조회</b> <span class="fn">episode_images()</span>
+      <pre><code>SELECT file_path FROM toon_episode_image
+ WHERE episode_code = %s AND file_path IS NOT NULL ORDER BY page_no</code></pre></li>
+    <li><b>파일 거르기</b> — 경로의 파일이 <b>실제로 존재</b>하고, 크기가 <b>0 초과 4.5MB 이하</b>인 것만 남김 (API 이미지 1장 한도 5MB 대비).</li>
+    <li><b>고르게 8장 뽑기</b> — 남은 파일이 8장보다 많으면 <code>step = 개수 / 8</code>, <code>int(i × step)</code> (i = 0~7) 번째 파일을 선택.
+      <div class="fn">예: 49장 → step 6.125 → 인덱스 0, 6, 12, 18, 24, 30, 36, 42 → 1·7·13·19·25·31·37·43 번째 파일.
+        (인덱스는 거른 뒤 목록 기준이라, 중간 파일이 빠졌으면 page_no 와 어긋날 수 있음)</div></li>
+    <li><b>형식 판별</b> — 파일 앞부분 바이트로 JPEG / PNG / WEBP / GIF 판별, 그 외 형식은 제외.
+      <b>남은 이미지가 0장이면</b> “읽을 수 있는 회차 이미지 없음 → 건너뜀”.</li>
+    <li><b>Gemini 분석</b> <span class="fn">analyze_episode()</span>
+      <ul>
+        <li>시스템 프롬프트: “{웹툰}을 꾸준히 보는 독자” 역할 + 이미지에 보이는 내용만 근거로 + 사이트 규정 + 1~3문장·40~150자</li>
+        <li>입력: 이미지 N장 + “작품: … / 회차: … / 위 이미지 N장은 이 회차에서 순서대로 고르게 뽑은 장면입니다.”</li>
+        <li>출력: JSON <code>{summary, comment}</code> (temperature 0.8)</li>
+        <li>429(할당량) · 404(모델 없음)이면 다음 모델로 바꿔 <b>같은 회차 재요청</b>. 바뀐 모델은 남은 회차에도 유지.</li>
+      </ul></li>
+    <li><b>규정 검사 · 재시도</b> — <code>rules.check(comment)</code> 위반이면 사유를 붙여(“이전에 쓴 댓글이 규정 검사에서 거절됐습니다: …”) 다시 요청.
+      <b>최대 2회</b> 시도해도 위반이면 “규정 통과 실패 → 저장 안 함”.</li>
+    <li><b>원글 URL 조립</b> — <code>{source_url 의 scheme://host}/webtoon/{toon_id}/{episode_code}</code>.
+      source_url 이 없으면 <code>https://toki35.com</code>.<br>
+      <span class="fn">예: https://toki35.com/webtoon/17716/u-mq12tjtz-8w55</span></li>
+    <li><b>저장</b> — <code>INSERT IGNORE INTO book_comment_recommend</code> (kind='toon', work_id, episode_code, episode_no, 제목들, source_url, summary, body, model), status 기본 <code>R</code>.
+      고유키 (kind, work_id, episode_code) 충돌이면 “추천이 이미 있음 → 건너뜀”.</li>
+    <li><b>commit</b> — <code>run()</code> 이 건마다 commit → book_web 화면에서 진행 상황이 바로 보임.</li>
+  </ol>
+
+  <!-- 7 -->
+  <h2 id="output">7. 출력 예시</h2>
+  <h3>8616 을 toon 으로 실행 (현재 명령)</h3>
+  <pre><code>[웹툰] 작품 ID 8616 를 찾을 수 없습니다.
+완료: 0건 저장</code></pre>
+  <h3>정상 웹툰 작품 (예: 17716, 이미지 파일이 있는 PC)</h3>
+  <pre><code>[웹툰] 17716 옥탑방 야스킹 — 추천 없는 회차 3개 (요청 3개, 시작 모델 gemini-3.5-flash-lite)
+[모델] 전환 우선순위: gemini-3.5-flash-lite -> gemini-3.5-flash -> … -> gemini-2.5-pro
+[1/3] 17716 옥탑방 야스킹 — 1화 저장: (생성된 댓글)
+[2/3] 17716 옥탑방 야스킹 — 2화 저장: (생성된 댓글)
+[3/3] 17716 옥탑방 야스킹 — 3화 저장: (생성된 댓글)
+완료: 3건 저장 (마지막 모델 gemini-3.5-flash-lite)</code></pre>
+  <div class="fn">회차 표기는 <code>episode_no</code> + 회차 제목이며, 제목이 “N화” 와 같으면 “N화” 만 표시합니다.</div>
+  <h3>이미지 파일이 없는 PC</h3>
+  <pre><code>[1/3] 17716 옥탑방 야스킹 — 읽을 수 있는 회차 이미지 없음 → 건너뜀
+…
+완료: 0건 저장 (마지막 모델 gemini-3.5-flash-lite)</code></pre>
+
+  <!-- 8 -->
+  <h2 id="cautions">8. 주의 · 확인 사항</h2>
+  <ul>
+    <li><b>kind 와 ID 가 맞아야 합니다.</b> 같은 숫자 ID 가 소설·웹툰·만화에 따로 존재할 수 있고, 작품을 찾지 못해도 오류가 아니라 “0건 저장”으로 끝납니다.
+      book_web 에서 [댓글 생성]을 호출할 때 넘기는 구분 값도 함께 확인해 보세요.</li>
+    <li><b>이미지 파일은 실행하는 PC 의 경로</b>(<code>D:\booktoon\{toon_id}\{episode_no}\…</code>)를 직접 읽습니다.
+      2026-10-18 조회 시 17716 의 70~72화는 이 PC 에서 사용 가능한 파일이 0장이었습니다
+      (DB 경로 72 · 49 · 51건, 실제 파일 없음). 변경 후 선정되는 1~3화도 파일이 있는지 실행 전에 확인하세요.</li>
+    <li><b>건너뛴 회차는 계속 1순위로 남습니다.</b> 저장되지 않았으므로 ③ 에 걸리지 않아, 다음 실행에서도 같은 회차가 다시 선정됩니다. 이미지 파일을 다시 수집하기 전까지 같은 결과가 반복됩니다.</li>
+    <li><b>읽지 않은 최신 회차는 뒤로 밀립니다.</b> 읽은 기록이 하나라도 있는 작품은, 추천 없는 읽은 회차가 모두 소진될 때까지 안 읽은 최신 회차가 선정되지 않습니다.</li>
+    <li><b>랜덤 모드(<code>--book-id</code> 없음)에도 같은 순서가 적용됩니다.</b> 작품마다 1회차를 고를 때도 이제 읽은 지 가장 오래된 회차가 선택됩니다.</li>
+    <li><b>API 키 확인이 작품 확인보다 먼저</b>입니다. 작품이 없더라도 Gemini 키가 없으면 키 안내 메시지로 종료합니다.</li>
+    <li>사이트 등록은 하지 않습니다. 저장된 추천(R)은 book_web <code>/comment_list</code> 에서 수정(S) → 연동(C) → 사용자 직접 등록 → 등록완료(P) 로 처리합니다.</li>
+  </ul>
+</main>
+</body>
+</html>
