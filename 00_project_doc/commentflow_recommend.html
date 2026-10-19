@@ -291,12 +291,12 @@
       <b>남은 이미지가 0장이면</b> “읽을 수 있는 회차 이미지 없음 → 건너뜀”.</li>
     <li><b>Gemini 분석</b> <span class="fn">analyze_episode()</span>
       <ul>
-        <li>시스템 프롬프트: “{웹툰}을 꾸준히 보는 독자” 역할 + 이미지에 보이는 내용만 근거로 + 사이트 규정 + 1~3문장·40~150자</li>
+        <li>시스템 프롬프트: “{웹툰}을 꾸준히 보는 독자” 역할 + 이미지에 보이는 내용만 근거로 + 사이트 규정 + 1~2문장·<b>공백 포함 50자 이내</b> (<code>MAX_COMMENT_CHARS</code>)</li>
         <li>입력: 이미지 N장 + “작품: … / 회차: … / 위 이미지 N장은 이 회차에서 순서대로 고르게 뽑은 장면입니다.”</li>
         <li>출력: JSON <code>{summary, comment}</code> (temperature 0.8)</li>
         <li>429(할당량) · 404(모델 없음)이면 다음 모델로 바꿔 <b>같은 회차 재요청</b>. 바뀐 모델은 남은 회차에도 유지.</li>
       </ul></li>
-    <li><b>규정 검사 · 재시도</b> — <code>rules.check(comment)</code> 위반이면 사유를 붙여(“이전에 쓴 댓글이 규정 검사에서 거절됐습니다: …”) 다시 요청.
+    <li><b>규정 검사 · 재시도</b> — <code>rules.check(comment)</code> 위반이거나 <b>50자를 넘으면</b> 사유를 붙여(“이전에 쓴 댓글이 규정 검사에서 거절됐습니다: …”) 다시 요청.
       <b>최대 2회</b> 시도해도 위반이면 “규정 통과 실패 → 저장 안 함”.</li>
     <li><b>원글 URL 조립</b> — <code>{source_url 의 scheme://host}/webtoon/{toon_id}/{episode_code}</code>.
       source_url 이 없으면 <code>https://toki35.com</code>.<br>

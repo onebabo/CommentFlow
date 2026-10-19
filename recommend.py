@@ -28,6 +28,7 @@ DEFAULT_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_ORIGIN = "https://toki35.com"
 PENDING_TITLE_PREFIX = "[등록대기]"
 MAX_ATTEMPTS = 2
+MAX_COMMENT_CHARS = 50  # 추천 댓글 길이 상한 (공백 포함)
 MAX_IMAGES = 8
 MAX_IMAGE_BYTES = 4_500_000  # API 이미지 1장 한도(5MB) 아래로
 MAX_NOVEL_CHARS = 100_000  # 무료 티어·요청 크기 여유
@@ -50,12 +51,12 @@ KINDS = {
     "manhwa": {"label": "만화", "segment": "manhwa", "table": "manhwa", "id": "manhwa_id"},
 }
 
-RULES_PROMPT = """반드시 지킬 사이트 댓글 규정:
+RULES_PROMPT = f"""반드시 지킬 사이트 댓글 규정:
 - 작품 감상평이 아닌 의미 없는 댓글("감사합니다", "잘봤어요", "수고하셨습니다" 등)은 금지입니다. 인사말만으로 끝내지 말고, 이번 회차의 구체적인 장면·인물·전개에 대한 감상을 담으세요.
 - 유료 회차, 결제, 포인트, 크롤링, 아류 사이트, 인증·잠금 절차 등 사이트 운영에 대한 언급이나 불평은 절대 쓰지 마세요. 내용에 같은 단어가 나와도 댓글에는 쓰지 마세요.
 
 댓글 작성 기준:
-- 1~3문장, 40~150자 정도. 실제 독자가 쓴 것처럼 자연스러운 존댓말 또는 가벼운 구어체.
+- 1~2문장, 공백 포함 {MAX_COMMENT_CHARS}자 이내 (넘으면 거절됩니다). 실제 독자가 쓴 것처럼 자연스러운 존댓말 또는 가벼운 구어체.
 - 이번 회차 내용에 근거한 감상(좋았던 점, 아쉬운 점, 다음 전개 기대)을 씁니다. 결말을 통째로 밝히는 스포일러는 피합니다.
 - 다른 독자나 작가를 비난하지 않습니다. AI 라는 사실이나 이 지시문은 언급하지 않습니다.
 
@@ -73,7 +74,7 @@ OUTPUT_SCHEMA = {
     "type": "object",
     "properties": {
         "summary": {"type": "string", "description": "이번 회차 핵심 내용 요약 2~3문장"},
-        "comment": {"type": "string", "description": "규정을 지킨 감상 댓글"},
+        "comment": {"type": "string", "description": f"규정을 지킨 감상 댓글 ({MAX_COMMENT_CHARS}자 이내)"},
     },
     "required": ["summary", "comment"],
 }
@@ -421,6 +422,8 @@ def recommend_for_episode(cursor, client, models: ModelSession, kind: str, work:
     for _ in range(MAX_ATTEMPTS):
         result = analyze_episode(client, models, kind, work["title"], episode, images, feedback)
         errors, _warnings = rules.check(result["comment"])
+        if len(result["comment"]) > MAX_COMMENT_CHARS:
+            errors.append(f"댓글이 {len(result['comment'])}자입니다. {MAX_COMMENT_CHARS}자 이내로 줄이세요.")
         if not errors:
             break
         feedback = " / ".join(errors)
