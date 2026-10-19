@@ -48,7 +48,8 @@ python commentflow.py recommend --kind novel --count 20   # novel:소설, toon:�
    (`comment_sql/01_comment_recommend_테이블생성.sql`, 접속 시 자동 생성).
 
 작품 ID 를 주면 그 작품만 대상으로 합니다 (`/comment_list` 의 작품 아이디 입력값).
-추천 댓글이 아직 없는 회차를 읽은 지 오래된 순(같은 시각이면 앞 회차부터, 읽은 기록이 없으면 최신 회차 순)으로 `--count` 개 골라 회차마다 만듭니다.
+추천 댓글이 아직 없는 회차를 읽은 지 오래된 순(같은 시각이면 앞 회차부터)으로 세워 3칸 간격으로 `--count` 개 골라 회차마다 만듭니다
+(예: 읽은 회차 1·3·5·7·8·10·12 → 1·7·12). 모자라면 건너뛴 읽은 회차, 그다음 읽지 않은 최신 회차로 채웁니다.
 
 ```
 python commentflow.py recommend --kind novel --book-id 59094 --count 3   # book_web 기본 3 (웹툰·만화는 추후)

@@ -118,7 +118,7 @@
 완료: 0건 저장</code></pre>
   <p>이 작품에 추천 댓글을 만들려면 구분을 소설로 지정해야 합니다.</p>
   <pre><code>python commentflow.py recommend --kind novel --book-id 8616 --count 3</code></pre>
-  <p>그러면 <b>1화 · 2화 · 3화</b> 가 선정됩니다 (<a href="#ex-novel">5-6 실데이터 예시</a>).
+  <p>그러면 <b>7화 · 10화 · 13화</b> 가 선정됩니다 (2026-10-19 기준) (<a href="#ex-novel">5-7 실데이터 예시</a>).
     아래 문서는 <b>웹툰(<code>--kind toon</code>) 처리 절차</b>를 기준으로 설명하고, 소설과 다른 점은 따로 표시합니다.
     웹툰 실데이터 예시로는 실제 웹툰 <b>17716 “옥탑방 야스킹”</b> 을 사용했습니다.</p>
 
@@ -172,8 +172,9 @@
 
   <!-- 5 -->
   <h2 id="select">5. 회차 3개 선정 규칙 (pick_episodes) — 상세</h2>
-  <p>한 번의 SQL 로 <b>후보를 거르고 → 우선순위로 정렬하고 → 위에서 3개</b>를 자릅니다.</p>
-  <pre><code>SELECT e.episode_code, e.episode_no, e.episode_title
+  <p>SQL(<code>episode_candidates</code>)로 <b>후보를 거르고 → 우선순위로 정렬</b>한 뒤,
+    파이썬(<code>pick_episodes</code>)에서 <b>읽은 회차를 3칸 간격으로 3개</b> 고릅니다.</p>
+  <pre><code>SELECT e.episode_code, e.episode_no, e.episode_title, (r.toon_id IS NOT NULL) AS is_read
   FROM toon_episode AS e
   LEFT JOIN toon_episode_read AS r
          ON r.toon_id = e.toon_id AND r.episode_no = e.episode_no
@@ -187,15 +188,19 @@
           CASE WHEN r.toon_id IS NOT NULL
                THEN e.episode_no END,         -- ㉢ (읽은 회차) 같은 시각이면 앞 회차부터
           e.episode_no DESC                   -- ㉣ (안 읽은 회차) 최신 회차부터
- LIMIT 3                                      -- --count</code></pre>
-  <div class="note">2026-10-19 변경: 읽은 회차는 <b>최근에 읽은 순 → 읽은 지 오래된 순</b>으로 바뀌었습니다 (<code>recommend.py pick_episodes</code>, 소설·웹툰·만화 공통).</div>
+-- LIMIT 없음: 후보 전체를 가져와 파이썬에서 3칸 간격으로 선정</code></pre>
+  <pre><code>read   = [e for e in candidates if e["is_read"]]      # 읽은 회차 (오래된 순)
+picked = read[::READ_STEP][:limit]                     # 0·3·6번째 … (READ_STEP = 3)
+picked += [나머지 후보 순서대로][:limit - len(picked)]  # 모자라면 채움</code></pre>
+  <div class="note">2026-10-19 변경: 읽은 회차는 <b>최근에 읽은 순 → 읽은 지 오래된 순</b>으로 바뀌었고,
+    이어서 <b>앞에서 연속 3개 → 3칸 간격 3개</b>로 바뀌었습니다 (<code>recommend.py pick_episodes</code>, 소설·웹툰·만화 공통).</div>
 
   <div class="funnel">
     <div style="max-width:100%">작품의 전체 회차 <small><code>toon_episode WHERE toon_id = 8616</code></small></div>
     <div style="max-width:86%">② 이미지 수집 완료 회차만 <small><code>has_images = 1</code></small></div>
     <div style="max-width:72%">③ 추천 댓글이 아직 없는 회차만 <small><code>book_comment_recommend</code> 에 같은 회차 없음</small></div>
     <div style="max-width:58%">㉠~㉣ 우선순위 정렬 <small>읽은 회차(오래 전에 읽은 순) → 안 읽은 회차(최신 순)</small></div>
-    <div style="max-width:44%; border-color: var(--accent); font-weight: bold;">위에서 3개 (LIMIT 3)</div>
+    <div style="max-width:44%; border-color: var(--accent); font-weight: bold;">읽은 회차 3칸 간격으로 3개 <small>모자라면 나머지 후보로 채움</small></div>
   </div>
 
   <h3>5-1. 후보 조건 (WHERE)</h3>
@@ -226,17 +231,34 @@
       <td>읽지 않은 회차끼리는 <b>회차 번호가 큰(최신) 회차 먼저</b> (변경 없음).</td></tr>
   </table></div>
 
-  <h3>5-3. 경우별로 정리한 선정 결과</h3>
+  <h3>5-3. 3칸 간격 선정 (READ_STEP = 3)</h3>
+  <p>정렬된 후보 중 <b>읽은 회차만</b> 따로 세운 뒤, 0번째부터 3칸씩 건너뛰며 고릅니다.</p>
+  <div class="table-wrap"><table>
+    <tr><th>읽은 회차 (오래된 순)</th><th>1</th><th>3</th><th>5</th><th>7</th><th>8</th><th>10</th><th>12</th></tr>
+    <tr><td>순서(인덱스)</td><td>0</td><td>1</td><td>2</td><td>3</td><td>4</td><td>5</td><td>6</td></tr>
+    <tr><td>기존 (앞에서 연속 3개)</td><td class="ok">●</td><td class="ok">●</td><td class="ok">●</td><td></td><td></td><td></td><td></td></tr>
+    <tr class="pick"><td><b>신규 (3칸 간격)</b></td><td class="ok">●</td><td></td><td></td><td class="ok">●</td><td></td><td></td><td class="ok">●</td></tr>
+  </table></div>
+  <ul>
+    <li>간격은 <b>회차 번호가 아니라 읽은 회차 목록의 순서</b> 기준입니다. 1·3·5·7·8·10·12화 → 0·3·6번째 = <b>1·7·12화</b>.</li>
+    <li>3칸 간격으로 3개가 안 나오면(읽은 회차 7개 미만) <b>나머지 후보를 정렬 순서대로</b> 채웁니다:
+      건너뛴 읽은 회차(오래된 순) → 읽지 않은 회차(최신 순).</li>
+    <li><code>--book-id</code> 없는 랜덤 모드는 작품당 1회차(<code>limit=1</code>)라 0번째 = 읽은 지 가장 오래된 회차로, 결과가 이전과 같습니다.</li>
+  </ul>
+
+  <h3>5-4. 경우별로 정리한 선정 결과</h3>
   <div class="table-wrap"><table>
     <tr><th>상황</th><th>선정되는 3개</th></tr>
-    <tr><td>읽은 회차가 3개 이상 (추천 없는 것 기준)</td><td><b>읽은 지 가장 오래된 3개 회차</b> (같은 시각에 읽었으면 앞 회차부터)</td></tr>
+    <tr><td>읽은 회차가 7개 이상 (추천 없는 것 기준)</td><td><b>읽은 회차 목록의 0·3·6번째</b> (예: 1·3·5·7·8·10·12 → 1·7·12)</td></tr>
+    <tr><td>읽은 회차가 4~6개</td><td>0·3번째 + 건너뛴 읽은 회차 중 가장 오래된 1개 (예: 1·3·5·7·8 → 1·7·3)</td></tr>
+    <tr><td>읽은 회차가 3개</td><td>0번째 + 나머지 읽은 회차 2개 → 결국 읽은 3개 전부</td></tr>
     <tr><td>읽은 회차가 1~2개</td><td>읽은 회차 전부(오래된 순) + 나머지는 읽지 않은 회차 중 번호가 큰 순</td></tr>
     <tr><td>읽은 기록이 전혀 없음</td><td>이미지 수집 완료된 회차 중 번호가 가장 큰 3개 (최신 3화)</td></tr>
     <tr><td>후보가 3개 미만</td><td>있는 만큼만 (0개면 “추천 없는 회차 0개” 출력 후 바로 완료)</td></tr>
     <tr><td>같은 명령을 다시 실행</td><td>방금 저장된 회차는 ③ 으로 빠지므로 <b>그다음 3개</b>가 선정됨</td></tr>
   </table></div>
 
-  <h3>5-4. 선정 후 탈락 — 빈자리를 채우지 않음</h3>
+  <h3>5-5. 선정 후 탈락 — 빈자리를 채우지 않음</h3>
   <p>3개는 <b>처리 시작 전에 한 번에 확정</b>됩니다. 처리 중 한 회차가 건너뛰어지거나 오류가 나도
     다음 순위 회차로 <b>대신 채우지 않습니다</b>. 그래서 <code>--count 3</code> 이라도 저장은 0~3건입니다.</p>
   <div class="flow">
@@ -247,28 +269,30 @@
     <span class="drop">이미 있음(동시 실행) → 건너뜀</span>
   </div>
 
-  <h3>5-5. 웹툰 실데이터 예시 — 17716 “옥탑방 야스킹”</h3>
-  <p>전체 86회차, 모두 has_images=1, 추천 0건, 읽은 기록 72건 (1~72화). 변경된 <code>pick_episodes</code> 를 <code>limit 5</code> 로 호출한 결과:</p>
+  <h3>5-6. 웹툰 실데이터 예시 — 17716 “옥탑방 야스킹”</h3>
+  <p>전체 86회차, 모두 has_images=1, 추천 0건, 읽은 기록 72건 (1~72화). 변경된 <code>pick_episodes(…, 17716, 3)</code> 결과 (2026-10-19 조회):</p>
   <div class="table-wrap"><table>
-    <tr><th>순위</th><th>episode_no</th><th>episode_code</th><th>읽음</th><th>read_at</th><th>선정</th></tr>
-    <tr class="pick"><td>1</td><td>1</td><td><code>1487321</code></td><td>Y</td><td>2026-10-17 13:45:38</td><td class="ok">선정</td></tr>
-    <tr class="pick"><td>2</td><td>2</td><td><code>1487322</code></td><td>Y</td><td>13:45:40</td><td class="ok">선정</td></tr>
-    <tr class="pick"><td>3</td><td>3</td><td><code>1487323</code></td><td>Y</td><td>13:47:21</td><td class="ok">선정</td></tr>
-    <tr><td>4</td><td>4</td><td><code>1487324</code></td><td>Y</td><td>13:48:37</td><td>다음 실행</td></tr>
-    <tr><td>5</td><td>5</td><td><code>1487325</code></td><td>Y</td><td>13:48:41</td><td>다음 실행</td></tr>
+    <tr><th>읽은 순서</th><th>episode_no</th><th>episode_code</th><th>선정</th></tr>
+    <tr class="pick"><td>0</td><td>1</td><td><code>1487321</code></td><td class="ok">선정</td></tr>
+    <tr><td>1 · 2</td><td>2 · 3</td><td>-</td><td>건너뜀</td></tr>
+    <tr class="pick"><td>3</td><td>4</td><td><code>1487324</code></td><td class="ok">선정</td></tr>
+    <tr><td>4 · 5</td><td>5 · 6</td><td>-</td><td>건너뜀</td></tr>
+    <tr class="pick"><td>6</td><td>7</td><td><code>1489419</code></td><td class="ok">선정</td></tr>
   </table></div>
-  <p>변경 전에는 72·71·70화(최근에 읽은 순)가 선정됐습니다. 73~86화는 이미지가 있어도 읽은 기록이 없어 ㉠ 에서 뒤로 밀리고,
+  <p>처음 변경 전에는 72·71·70화(최근에 읽은 순), 직전 버전에서는 1·2·3화가 선정됐습니다. 건너뛴 2·3·5·6화는 후보에 남아,
+    다음 실행에서는 읽은 회차 목록이 2·3·5·6·8·9·10… 이 되어 2·6·10화가 선정됩니다. 73~86화는 이미지가 있어도 읽은 기록이 없어 ㉠ 에서 뒤로 밀리고,
     읽은 72개 회차를 모두 처리한 뒤에야 86화부터 내려가며 선정됩니다.</p>
 
-  <h3 id="ex-novel">5-6. 소설 실데이터 예시 — 8616 “검은 늑대” (<code>--kind novel</code>)</h3>
-  <p>전체 553회차(모두 본문 있음), 읽음 75건, 추천 15건(54~70화). 소설은 읽음 여부를 <code>book_info_chapter.read_yn / read_at</code> 에서 직접 봅니다.</p>
+  <h3 id="ex-novel">5-7. 소설 실데이터 예시 — 8616 “검은 늑대” (<code>--kind novel</code>)</h3>
+  <p>전체 553회차(모두 본문 있음), 읽음 75건. 2026-10-19 조회 시 1~6화는 이미 추천이 있어 후보에서 빠지고, 읽은 회차 목록은 7화부터 시작합니다.
+    소설은 읽음 여부를 <code>book_info_chapter.read_yn / read_at</code> 에서 직접 봅니다.</p>
   <div class="table-wrap"><table>
-    <tr><th>순위</th><th>episode_no</th><th>episode_code</th><th>read_at</th><th>정렬 근거</th></tr>
-    <tr class="pick"><td>1</td><td>1</td><td>1223032</td><td>2026-10-18 00:06:27</td><td rowspan="3">가장 오래된 read_at 에 여러 회차가 <b>같은 초</b> → ㉢ 앞 회차(번호 작은 순)부터</td></tr>
-    <tr class="pick"><td>2</td><td>2</td><td>1223033</td><td>2026-10-18 00:06:27</td></tr>
-    <tr class="pick"><td>3</td><td>3</td><td>1223034</td><td>2026-10-18 00:06:27</td></tr>
+    <tr><th>읽은 순서</th><th>episode_no</th><th>episode_code</th><th>근거</th></tr>
+    <tr class="pick"><td>0</td><td>7</td><td>1223038</td><td rowspan="3">같은 초에 읽은 회차가 많아 ㉢ 앞 회차 순으로 정렬 → 3칸 간격</td></tr>
+    <tr class="pick"><td>3</td><td>10</td><td>1223041</td></tr>
+    <tr class="pick"><td>6</td><td>13</td><td>1223044</td></tr>
   </table></div>
-  <p class="fn">변경 전에는 최근에 읽은 75·74·73화가 선정됐습니다.</p>
+  <p class="fn">본문(content)은 선정된 3회차만 따로 조회합니다 (후보 전체의 본문은 읽지 않음).</p>
   <div class="table-wrap"><table>
     <tr><th>항목</th><th>toon / manhwa</th><th>novel</th></tr>
     <tr><td>회차 테이블</td><td><code>{t}_episode</code></td><td><code>book_info_chapter</code></td></tr>
@@ -315,8 +339,8 @@
   <pre><code>[웹툰] 17716 옥탑방 야스킹 — 추천 없는 회차 3개 (요청 3개, 시작 모델 gemini-3.5-flash-lite)
 [모델] 전환 우선순위: gemini-3.5-flash-lite -> gemini-3.5-flash -> … -> gemini-2.5-pro
 [1/3] 17716 옥탑방 야스킹 — 1화 저장: (생성된 댓글)
-[2/3] 17716 옥탑방 야스킹 — 2화 저장: (생성된 댓글)
-[3/3] 17716 옥탑방 야스킹 — 3화 저장: (생성된 댓글)
+[2/3] 17716 옥탑방 야스킹 — 4화 저장: (생성된 댓글)
+[3/3] 17716 옥탑방 야스킹 — 7화 저장: (생성된 댓글)
 완료: 3건 저장 (마지막 모델 gemini-3.5-flash-lite)</code></pre>
   <div class="fn">회차 표기는 <code>episode_no</code> + 회차 제목이며, 제목이 “N화” 와 같으면 “N화” 만 표시합니다.</div>
   <h3>이미지 파일이 없는 PC</h3>

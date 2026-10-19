@@ -9,7 +9,8 @@
 3) 사이트 댓글 규정(rules.py)을 통과한 감상 댓글만 book_comment_recommend 에 저장합니다.
 
 work_id(--book-id)를 주면 그 작품만 대상으로, 추천 댓글이 아직 없는 회차를
-읽은 지 오래된 순(없으면 최신 회차 순)으로 최대 N개 골라 회차마다 추천 댓글을 만듭니다.
+읽은 지 오래된 순으로 세워 READ_STEP 칸 간격으로(모자라면 남은 회차, 읽은 기록이 없으면 최신 회차 순)
+최대 N개 골라 회차마다 추천 댓글을 만듭니다.
 
 사이트에 댓글을 등록하지는 않습니다. 등록은 /comment_list 에서 [연동] 후 사용자가 직접 합니다.
 """
@@ -29,6 +30,7 @@ DEFAULT_ORIGIN = "https://toki35.com"
 PENDING_TITLE_PREFIX = "[등록대기]"
 MAX_ATTEMPTS = 2
 MAX_COMMENT_CHARS = 50  # 추천 댓글 길이 상한 (공백 포함)
+READ_STEP = 3  # 읽은 회차는 오래된 순으로 이 간격마다 1개씩 선정 (1,3,5,7,8,10,12 → 1,7,12)
 MAX_IMAGES = 8
 MAX_IMAGE_BYTES = 4_500_000  # API 이미지 1장 한도(5MB) 아래로
 MAX_NOVEL_CHARS = 100_000  # 무료 티어·요청 크기 여유
@@ -258,13 +260,34 @@ def pick_work(cursor, kind: str, work_id: int) -> dict | None:
 
 
 def pick_episodes(cursor, kind: str, work_id: int, limit: int = 1) -> list[dict]:
-    """추천 댓글이 없는 회차를 읽은 지 오래된 순(읽은 시각이 같으면 앞 회차부터)으로,
-    읽은 회차가 모자라면 읽지 않은 회차를 수집된 최신 순으로
-    → [{episode_code, episode_no, episode_title, content?}]"""
+    """추천 댓글이 없는 회차 limit 개 → [{episode_code, episode_no, episode_title, content?}]
+
+    읽은 회차를 읽은 지 오래된 순(읽은 시각이 같으면 앞 회차부터)으로 세워 READ_STEP 칸마다 1개씩 고르고,
+    모자라면 남은 후보(건너뛴 읽은 회차 → 읽지 않은 회차 최신 순)로 채웁니다."""
+    candidates = episode_candidates(cursor, kind, work_id)
+    read = [e for e in candidates if e["is_read"]]
+    picked = read[::READ_STEP][:limit]
+    codes = {e["episode_code"] for e in picked}
+    picked += [e for e in candidates if e["episode_code"] not in codes][:limit - len(picked)]
+
+    if kind == "novel" and picked:
+        cursor.execute(
+            "SELECT episode_code, content FROM book_info_chapter WHERE book_id = %s AND episode_code IN %s",
+            (work_id, [e["episode_code"] for e in picked]),
+        )
+        contents = {r["episode_code"]: r["content"] for r in cursor.fetchall()}
+        for e in picked:
+            e["content"] = contents.get(e["episode_code"])
+    return picked
+
+
+def episode_candidates(cursor, kind: str, work_id: int) -> list[dict]:
+    """추천 댓글이 없는 회차 전체를 읽은 회차(오래된 순) → 읽지 않은 회차(최신 순)로 정렬
+    → [{episode_code, episode_no, episode_title, is_read}]"""
     if kind == "novel":
         cursor.execute(
             """
-            SELECT c.episode_code, c.episode_no, c.episode_title, c.content
+            SELECT c.episode_code, c.episode_no, c.episode_title, (c.read_yn = 'Y') AS is_read
               FROM book_info_chapter AS c
              WHERE c.book_id = %s AND c.has_content = 1
                AND NOT EXISTS (SELECT 1 FROM book_comment_recommend AS r
@@ -274,16 +297,15 @@ def pick_episodes(cursor, kind: str, work_id: int, limit: int = 1) -> list[dict]
                       CASE WHEN c.read_yn = 'Y' THEN c.read_at END,
                       CASE WHEN c.read_yn = 'Y' THEN c.episode_no END,
                       c.episode_no DESC
-             LIMIT %s
             """,
-            (work_id, limit),
+            (work_id,),
         )
         return cursor.fetchall()
 
     t, idc = KINDS[kind]["table"], KINDS[kind]["id"]
     cursor.execute(
         f"""
-        SELECT e.episode_code, e.episode_no, e.episode_title
+        SELECT e.episode_code, e.episode_no, e.episode_title, (r.{idc} IS NOT NULL) AS is_read
           FROM {t}_episode AS e
           LEFT JOIN {t}_episode_read AS r ON r.{idc} = e.{idc} AND r.episode_no = e.episode_no
          WHERE e.{idc} = %s AND e.has_images = 1
@@ -293,9 +315,8 @@ def pick_episodes(cursor, kind: str, work_id: int, limit: int = 1) -> list[dict]
          ORDER BY (r.{idc} IS NOT NULL) DESC, r.read_at,
                   CASE WHEN r.{idc} IS NOT NULL THEN e.episode_no END,
                   e.episode_no DESC
-         LIMIT %s
         """,
-        (work_id, kind, limit),
+        (work_id, kind),
     )
     return cursor.fetchall()
 
