@@ -1,0 +1,276 @@
+    
+
+
+https://onebabobook.baeoom.com/book_list
+
+D:\workspaces\github\onebabo\book_web 프로젝트
+
+사이트의 상단 메뉴 추가
+
+onebabo book  우측에 작은 아이콘 버튼(댓글) 
+https://onebabobook.baeoom.com/comment_list
+
+해당 페이지는
+소설 / 웹툰 / 만화 카테고리별 ( 기본은 소설)
+
+댓글 추천 해서 저장된 내역 최신 20개 추천 노출
+ - 댓글  + 댓글 추천생성에서 만들어진 댓글 내용  릿트
+제목 만 나열식 리스트페이지 구성- 썸네일 X (20개씩 페이징 구성)
+
+
+댓글 생성 버튼 이 상단에 노출
+
+댓글 생성 버튼을 클릭을 하게 하게 되면  
+
+commentflow 프로젝트에 파이썬을 호출해서   
+ 내가 보유중인 작품의 에피소드의 내용을  분석하고 
+
+ 해당 사이트의 댓글 규정 준수
+댓글 규정은 반드시 준수
+⚠ 작품 감상평이 아닌 의미 없는 댓글(예: “감사합니다”, “잘봤어요” 등) 작성 시 댓글 삭제 및 영구 차단됩니다.
+⚠ 일부 유료 회차는 크롤링해가는 아류사이트들로 인해 어쩔 수 없이 도입된 절차이니 양해부탁드리며, 관련 불평 댓글 작성 시 악용자로 간주하여 영구 차단합니다.
+을 준수하여 댓글 추천해서  리스트에 남겨기
+(추천 댓글은  DB에 저장 -에피소프 연동)
+
+1. 작품/에피소드 선택 규정  
+   - 랜덤하게   댓글 저장하지 않는 작품을 기준으로  20개 자동선정
+2. 해당 작품을 먼저 읽고  
+   에피소드 회차등 기본정보
+   아래줄에  댓글 추천 내용   (수정.저장기능)
+3. 해당 페이지에서  연동버튼 생성 (연동버튼을 클릭하게 되면 원글 댓글 시스템 폼으로 댓글 추천 내용 전달)
+  초전도체로 세계재벌 250화 
+  https://onebabobook.baeoom.com/book_view/59094/6063116
+  -->
+  https://toki35.com/novel/59094/6063116
+
+
+
+
+
+
+좀전에 작업시  웹서비스 작업부분은 동일 프로젝트에서 진행했는데
+
+해당 부분은  별도로 클로드로  프로젝트에서 직접 요청하려구 하니까
+
+요청내역을 ork_web.txt에 요청해야할  요청서(명령어) 정리해줘
+
+ㅐnebabo book  우측에 작은 아이콘 버튼(댓글) 
+https://onebabobook.baeoom.com/comment_list
+
+
+
+D:\workspaces\github\onebabo\book_web  별도로  클로드 요청예정이라서
+분리 요청부분만 work_web.txt에 요청 명령어 정리해줘
+
+
+
+댓글 생성
+댓글 추천 해서 저장된 내역 최신 20개 추천 노출
+
+변경 1)
+    댓글 추천 해서 저장된 내역 최신 10개 추천 노출 변경
+변경 2)
+    댓글 생성시  book-id값이 지정되면  해당 book-id에서만 댓글 추천생성
+    book-id값 없으며 기존처럼 전체를 대상으로 생성
+
+
+http://localhost:3000/comment_list
+소설 아이디 입력폼  값 전달 받아서  댓글 생성
+
+
+변경 1)
+    댓글 추천 해서 저장된 내역 최신 10개 추천 노출 변경
+변경 2)
+    댓글 생성시  book-id값이 지정되면  해당 book-id에서만 댓글 추천생성
+    book-id값 없으며 기존처럼 전체를 대상으로 생성
+
+
+59094
+
+댓글 생성이 끝났습니다.
+
+[exit] 0
+
+
+
+
+
+테이블 : book_work_list
+컬럼 :source_url,
+
+테이블 : book_info_chapter
+컬럼 : org_html_url
+
+
+테이블 : book_comment_recommend
+컬럼 : source_url
+
+
+추가적으로  도메인 정보가 있는 테이블도 찾아서 
+도메인 패턴 변경 정보 일괄 업데이트 해줘
+
+도메인정보 
+toki???.com  -->  toki35.com
+
+
+ newtoki1.org·booktoki9.org  도메인도 같이 적용해줘
+
+toki35.com 으로 일괄 변경
+
+
+https://toki33.com/novel/63201
+-->
+https://toki35.com/novel/63201
+    
+
+
+https://onebabobook.baeoom.com/book_list
+
+D:\workspaces\github\onebabo\book_web 프로젝트
+
+사이트의 상단 메뉴 추가
+
+onebabo book  우측에 작은 아이콘 버튼(댓글) 
+https://onebabobook.baeoom.com/comment_list
+
+해당 페이지는
+소설 / 웹툰 / 만화 카테고리별 ( 기본은 소설)
+
+댓글 추천 해서 저장된 내역 최신 20개 추천 노출
+ - 댓글  + 댓글 추천생성에서 만들어진 댓글 내용  릿트
+제목 만 나열식 리스트페이지 구성- 썸네일 X (20개씩 페이징 구성)
+
+
+댓글 생성 버튼 이 상단에 노출
+
+댓글 생성 버튼을 클릭을 하게 하게 되면  
+
+commentflow 프로젝트에 파이썬을 호출해서   
+ 내가 보유중인 작품의 에피소드의 내용을  분석하고 
+
+ 해당 사이트의 댓글 규정 준수
+댓글 규정은 반드시 준수
+⚠ 작품 감상평이 아닌 의미 없는 댓글(예: “감사합니다”, “잘봤어요” 등) 작성 시 댓글 삭제 및 영구 차단됩니다.
+⚠ 일부 유료 회차는 크롤링해가는 아류사이트들로 인해 어쩔 수 없이 도입된 절차이니 양해부탁드리며, 관련 불평 댓글 작성 시 악용자로 간주하여 영구 차단합니다.
+을 준수하여 댓글 추천해서  리스트에 남겨기
+(추천 댓글은  DB에 저장 -에피소프 연동)
+
+1. 작품/에피소드 선택 규정  
+   - 랜덤하게   댓글 저장하지 않는 작품을 기준으로  20개 자동선정
+2. 해당 작품을 먼저 읽고  
+   에피소드 회차등 기본정보
+   아래줄에  댓글 추천 내용   (수정.저장기능)
+3. 해당 페이지에서  연동버튼 생성 (연동버튼을 클릭하게 되면 원글 댓글 시스템 폼으로 댓글 추천 내용 전달)
+  초전도체로 세계재벌 250화 
+  https://onebabobook.baeoom.com/book_view/59094/6063116
+  -->
+  https://toki35.com/novel/59094/6063116
+
+
+
+
+
+
+좀전에 작업시  웹서비스 작업부분은 동일 프로젝트에서 진행했는데
+
+해당 부분은  별도로 클로드로  프로젝트에서 직접 요청하려구 하니까
+
+요청내역을 ork_web.txt에 요청해야할  요청서(명령어) 정리해줘
+
+ㅐnebabo book  우측에 작은 아이콘 버튼(댓글) 
+https://onebabobook.baeoom.com/comment_list
+
+
+
+D:\workspaces\github\onebabo\book_web  별도로  클로드 요청예정이라서
+분리 요청부분만 work_web.txt에 요청 명령어 정리해줘
+
+
+
+댓글 생성
+댓글 추천 해서 저장된 내역 최신 20개 추천 노출
+
+변경 1)
+    댓글 추천 해서 저장된 내역 최신 10개 추천 노출 변경
+변경 2)
+    댓글 생성시  book-id값이 지정되면  해당 book-id에서만 댓글 추천생성
+    book-id값 없으며 기존처럼 전체를 대상으로 생성
+
+
+http://localhost:3000/comment_list
+소설 아이디 입력폼  값 전달 받아서  댓글 생성
+
+
+변경 1)
+    댓글 추천 해서 저장된 내역 최신 10개 추천 노출 변경
+변경 2)
+    댓글 생성시  book-id값이 지정되면  해당 book-id에서만 댓글 추천생성
+    book-id값 없으며 기존처럼 전체를 대상으로 생성
+
+
+59094
+
+댓글 생성이 끝났습니다.
+
+[exit] 0
+
+
+
+
+
+테이블 : book_work_list
+컬럼 :source_url,
+
+테이블 : book_info_chapter
+컬럼 : org_html_url
+
+
+테이블 : book_comment_recommend
+컬럼 : source_url
+
+
+추가적으로  도메인 정보가 있는 테이블도 찾아서 
+도메인 패턴 변경 정보 일괄 업데이트 해줘
+
+도메인정보 
+toki???.com  -->  toki35.com
+
+
+ newtoki1.org·booktoki9.org  도메인도 같이 적용해줘
+
+toki35.com 으로 일괄 변경
+
+
+https://toki33.com/novel/63201
+-->
+https://toki35.com/novel/63201
+
+
+
+전환 순서 3.5-flash-lite → 3.5-flash → 3.1-flash-lite → 3.1-flash → 2.5-flash-lite → 2.5-flash → 2.5-pro
+
+
+
+python commentflow.py recommend --kind novel --book-id 8616 --count 3   # book_web 기본 3 (웹툰·만화는 추후)
+
+
+==>
+
+commentflow.py  처리 절차(개념)을  문서화 해줘 HTML (/00_project_doc/commentflow_분석_20261018.html)
+
+
+
+
+python commentflow.py recommend --kind toon --book-id 8616 --count 3
+을 처리하는 절차를 상세하게 문서화 해줘 HTML (/00_project_doc/commentflow_recommend.html)
+
+count 3개를 선정하는 규칙을 좀더 상세하게 정리
+
+
+
+
+python commentflow.py recommend --kind toon --book-id 8616 --count 3
+
+에서 
+읽은 회차가 3개 이상 (추천 없는 것 기준)	가장 최근에 읽은 3개 회차
+==>  읽은지 오래된 3개회차 가져오기 (오래된 기준)
