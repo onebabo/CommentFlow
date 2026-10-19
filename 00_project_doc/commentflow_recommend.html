@@ -194,6 +194,9 @@ picked = read[::READ_STEP][:limit]                     # 0·3·6번째 … (READ
 picked += [나머지 후보 순서대로][:limit - len(picked)]  # 모자라면 채움</code></pre>
   <div class="note">2026-10-19 변경: 읽은 회차는 <b>최근에 읽은 순 → 읽은 지 오래된 순</b>으로 바뀌었고,
     이어서 <b>앞에서 연속 3개 → 3칸 간격 3개</b>로 바뀌었습니다 (<code>recommend.py pick_episodes</code>, 소설·웹툰·만화 공통).</div>
+  <div class="note">2026-10-19 추가: 등록완료(P)한 추천 댓글이 있는 작품은 <b>그중 가장 오래된 회차부터 회차 순으로 3칸 간격</b>
+    (<code>posted_grid</code>)으로 추천 없는 회차를 먼저 고릅니다 (예: 1~57화 등록 → 58·61·64화).
+    모자랄 때만 위의 읽은 회차 3칸 간격 → 나머지 후보 순서로 채웁니다.</div>
 
   <div class="funnel">
     <div style="max-width:100%">작품의 전체 회차 <small><code>toon_episode WHERE toon_id = 8616</code></small></div>

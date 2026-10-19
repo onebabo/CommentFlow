@@ -9,7 +9,8 @@
 3) 사이트 댓글 규정(rules.py)을 통과한 감상 댓글만 book_comment_recommend 에 저장합니다.
 
 work_id(--book-id)를 주면 그 작품만 대상으로, 추천 댓글이 아직 없는 회차를
-읽은 지 오래된 순으로 세워 READ_STEP 칸 간격으로(모자라면 남은 회차, 읽은 기록이 없으면 최신 회차 순)
+등록완료(P)한 추천 댓글 중 가장 오래된 회차부터 회차 순으로 READ_STEP 칸 간격으로
+(모자라면 읽은 지 오래된 순으로 READ_STEP 칸 간격 → 남은 회차, 읽은 기록이 없으면 최신 회차 순)
 최대 N개 골라 회차마다 추천 댓글을 만듭니다.
 
 사이트에 댓글을 등록하지는 않습니다. 등록은 /comment_list 에서 [연동] 후 사용자가 직접 합니다.
@@ -30,7 +31,7 @@ DEFAULT_ORIGIN = "https://toki35.com"
 PENDING_TITLE_PREFIX = "[등록대기]"
 MAX_ATTEMPTS = 2
 MAX_COMMENT_CHARS = 50  # 추천 댓글 길이 상한 (공백 포함)
-READ_STEP = 3  # 읽은 회차는 오래된 순으로 이 간격마다 1개씩 선정 (1,3,5,7,8,10,12 → 1,7,12)
+READ_STEP = 3  # 등록 기준 회차·읽은 회차를 이 간격마다 1개씩 선정 (1,3,5,7,8,10,12 → 1,7,12)
 MAX_IMAGES = 8
 MAX_IMAGE_BYTES = 4_500_000  # API 이미지 1장 한도(5MB) 아래로
 MAX_NOVEL_CHARS = 100_000  # 무료 티어·요청 크기 여유
@@ -262,11 +263,15 @@ def pick_work(cursor, kind: str, work_id: int) -> dict | None:
 def pick_episodes(cursor, kind: str, work_id: int, limit: int = 1) -> list[dict]:
     """추천 댓글이 없는 회차 limit 개 → [{episode_code, episode_no, episode_title, content?}]
 
-    읽은 회차를 읽은 지 오래된 순(읽은 시각이 같으면 앞 회차부터)으로 세워 READ_STEP 칸마다 1개씩 고르고,
-    모자라면 남은 후보(건너뛴 읽은 회차 → 읽지 않은 회차 최신 순)로 채웁니다."""
-    candidates = episode_candidates(cursor, kind, work_id)
+    1) 등록완료(P)한 추천 댓글이 있으면 그중 가장 오래된 회차부터 회차 순으로 세워
+       READ_STEP 칸마다 1개씩, 추천 댓글이 없는 회차를 고릅니다 (등록 1화 → 4·7·10화 …).
+    2) 모자라면 읽은 회차를 읽은 지 오래된 순(읽은 시각이 같으면 앞 회차부터)으로 세워 READ_STEP 칸마다 1개씩,
+    3) 그래도 모자라면 남은 후보(건너뛴 읽은 회차 → 읽지 않은 회차 최신 순)로 채웁니다."""
+    picked = [e for e in posted_grid(cursor, kind, work_id)[::READ_STEP] if not e["has_rec"]][:limit]
+    codes = {e["episode_code"] for e in picked}
+    candidates = [e for e in episode_candidates(cursor, kind, work_id) if e["episode_code"] not in codes]
     read = [e for e in candidates if e["is_read"]]
-    picked = read[::READ_STEP][:limit]
+    picked += read[::READ_STEP][:limit - len(picked)]
     codes = {e["episode_code"] for e in picked}
     picked += [e for e in candidates if e["episode_code"] not in codes][:limit - len(picked)]
 
@@ -279,6 +284,46 @@ def pick_episodes(cursor, kind: str, work_id: int, limit: int = 1) -> list[dict]
         for e in picked:
             e["content"] = contents.get(e["episode_code"])
     return picked
+
+
+def posted_grid(cursor, kind: str, work_id: int) -> list[dict]:
+    """등록완료(P) 추천 댓글 중 가장 오래된 회차부터의 회차 전체 (회차 순, 등록 기록이 없으면 빈 목록)
+    → [{episode_code, episode_no, episode_title, has_rec}]"""
+    anchor = (
+        "(SELECT MIN(p.episode_no) FROM book_comment_recommend AS p "
+        "WHERE p.kind = %s AND p.work_id = %s AND p.status = 'P')"
+    )
+    if kind == "novel":
+        cursor.execute(
+            f"""
+            SELECT c.episode_code, c.episode_no, c.episode_title,
+                   EXISTS (SELECT 1 FROM book_comment_recommend AS r
+                            WHERE r.kind = 'novel' AND r.work_id = c.book_id
+                              AND r.episode_code = c.episode_code) AS has_rec
+              FROM book_info_chapter AS c
+             WHERE c.book_id = %s AND c.has_content = 1
+               AND c.episode_no >= {anchor}
+             ORDER BY c.episode_no, c.episode_code
+            """,
+            (work_id, kind, work_id),
+        )
+        return cursor.fetchall()
+
+    t, idc = KINDS[kind]["table"], KINDS[kind]["id"]
+    cursor.execute(
+        f"""
+        SELECT e.episode_code, e.episode_no, e.episode_title,
+               EXISTS (SELECT 1 FROM book_comment_recommend AS r
+                        WHERE r.kind = %s AND r.work_id = e.{idc}
+                          AND r.episode_code = e.episode_code) AS has_rec
+          FROM {t}_episode AS e
+         WHERE e.{idc} = %s AND e.has_images = 1
+           AND e.episode_no >= {anchor}
+         ORDER BY e.episode_no, e.episode_code
+        """,
+        (kind, work_id, kind, work_id),
+    )
+    return cursor.fetchall()
 
 
 def episode_candidates(cursor, kind: str, work_id: int) -> list[dict]:

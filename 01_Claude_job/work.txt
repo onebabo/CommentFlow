@@ -20,5 +20,9 @@ python commentflow.py recommend --kind toon --book-id 8616 --count 3
   신규  1, 7, 12   (step 3단을 기준으로 가져오기)    
 
 
+읽은지 오래된 3개회차 가져오기 (오래된 기준)
+==>
+댓글이 달린것 중인것 가장 오래된 회차  (step 3단을 기준으로 가져오기)   
 
-
+  ⎿  · "댓글이 달린 회차"는 어떤 기준일까요? 웹툰·만화는 회차마다 사이트 댓글 수(comment_cnt)가 있지만, 소설 
+     회차(book_info_chapter)에는 댓글 수 컬럼이 없습니다. → 내가 등록한 댓글 기준    
