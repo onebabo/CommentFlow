@@ -37,14 +37,29 @@ MAX_IMAGE_BYTES = 4_500_000  # API 이미지 1장 한도(5MB) 아래로
 MAX_NOVEL_CHARS = 100_000  # 무료 티어·요청 크기 여유
 
 # 무료 한도(429)·모델 불가(404) 시 이 순서로 전환 (config [gemini] models 로 덮어쓸 수 있음)
+# MODEL_PRIORITY = [
+#     "gemini-3.5-flash-lite",
+#     "gemini-3.5-flash",
+#     "gemini-3.1-flash-lite",
+#     "gemini-3.1-flash",
+#     "gemini-2.5-flash-lite",
+#     "gemini-2.5-flash",
+# ]
 MODEL_PRIORITY = [
+    # 1. 고한도 Lite 모델 (RPD 500)
     "gemini-3.5-flash-lite",
-    "gemini-3.5-flash",
     "gemini-3.1-flash-lite",
+
+    # 2. 최신 Flash 모델 (RPD 20)
+    "gemini-3.8-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
     "gemini-3.1-flash",
+    "gemini-3-flash",
+
+    # 3. 이전 버전 모델 (RPD 20)
     "gemini-2.5-flash-lite",
     "gemini-2.5-flash",
-    "gemini-2.5-pro",
 ]
 
 # kind → 화면 표기 · 사이트 URL 경로 · 테이블 접두어 · 작품 ID 컬럼
