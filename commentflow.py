@@ -172,10 +172,8 @@ def cmd_list(args) -> None:
 
 
 def cmd_recommend(args) -> None:
-    # TEMP: --count 3 인 경우 임시로 5로 변경
-    count = 5 if args.count == 3 else args.count
     with get_connection() as conn:
-        recommend.run(conn, args.kind, count, args.work_id)
+        recommend.run(conn, args.kind, args.count, args.work_id)
 
 
 def cmd_check(args) -> None:
